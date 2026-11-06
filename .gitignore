@@ -1,0 +1,31 @@
+# Build outputs
+/build/
+/cmake-build-*/
+/.tools/
+/*.elf
+/*.nacp
+/*.nro
+/*.nsp
+
+# Raw protocol captures may contain share IDs or session tokens.
+/protocol-samples/*.har
+
+# The local subscription URL contains a private access token.
+/youtube-subscription.txt
+/youtube-cookie.txt
+/youtube-cookie-validation.private.html
+/youtube-channel-validation.private.html
+
+# Personal configuration, credentials, captures and local work files.
+/newwex.json
+/client_secret_*.json
+/YouTube客户端凭据.txt
+/*.log
+/.deps/
+/.idea/
+/.run/
+/output/
+/tmp/
+/protocol-samples/
+/tools/batch-activation/build/
+/tools/batch-activation/dist/
