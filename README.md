@@ -1,6 +1,14 @@
 # OKSwitch
 
-OKSwitch 是 Nintendo Switch 的自制软件，提供影视来源搜索、网盘播放、咪咕及 CCTV 直播，并有 YouTube 页面。它需要自制软件运行环境和可用的网络连接。
+OKSwitch 是基于TVBox开发的 Nintendo Switch 版本，须在大气层系统中运行，起因是我的 switch 一直连着显示屏，有时候想看点视频还得切换HDMI设备，有点麻烦，干脆让switch也拥有电视盒子的功能吧。
+用过TVBox的应该都知道，它提供了海量的影视来源搜索（需自行配置订阅源）、然后我自己平时也喜欢看看体育直播，所以加入了咪咕及 CCTV 直播。最后是 YouTube 页面，为了它我也在软件中加入了梯子功能，目前支持的机场如下：
+Trojan：普通 TCP/TLS
+VLESS：TCP + TLS
+SS：AES-128-GCM、AES-256-GCM、ChaCha20-IETF-Poly1305
+SSR：`origin + plain`，配合 AES-128-CFB 或 AES-256-CFB
+VMess：AEAD TCP，可选 TLS
+AnyTLS：Clash YAML 中的内联节点。
+挂上梯子还有一个好处是可以在线更新，毕竟服务器还是太贵啦。
 
 ## 安装
 
