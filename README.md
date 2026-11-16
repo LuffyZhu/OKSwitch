@@ -1,5 +1,7 @@
 # OKSwitch
 
+[项目主页](https://luffyzhu.github.io/OKSwitch/) · [隐私政策](https://luffyzhu.github.io/OKSwitch/privacy.html)
+
 OKSwitch 是基于TVBox开发的 Nintendo Switch 版本，须在大气层系统中运行，起因是我的 switch 一直连着显示屏，有时候想看点视频还得切换HDMI设备，有点麻烦，干脆让switch也拥有电视盒子的功能吧。
 用过TVBox的应该都知道，它提供了海量的影视来源搜索（需自行配置订阅源）、然后我自己平时也喜欢看看体育直播，所以加入了咪咕及 CCTV 直播。最后是 YouTube 页面，为了它我也在软件中加入了梯子功能，目前支持的机场如下：
 Trojan：普通 TCP/TLS

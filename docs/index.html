@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="OKSwitch 是一款 Nintendo Switch 自制媒体应用，提供用户自行配置的视频源、体育直播和 YouTube 浏览功能。">
+  <title>OKSwitch · Nintendo Switch 媒体应用</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+    *{box-sizing:border-box}body{margin:0;background:#0b1018;color:#f1f5f9;line-height:1.7}
+    header,main,footer{max-width:920px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:24px}
+    .brand{font-weight:750;font-size:1.25rem;letter-spacing:.02em}nav{display:flex;gap:20px;flex-wrap:wrap}
+    a{color:#8edee0;text-underline-offset:3px}nav a{text-decoration:none;color:#cbd5e1}
+    .hero{padding:64px 0 48px}h1{font-size:clamp(2.3rem,7vw,4.5rem);line-height:1.12;margin:0 0 24px}
+    h2{font-size:1.5rem;margin:0 0 14px}p{color:#cbd5e1;margin:0 0 20px;max-width:720px}
+    .button{display:inline-block;background:#2eb39d;color:#061611;padding:12px 21px;border-radius:8px;font-weight:700;text-decoration:none}
+    .secondary{background:#263345;color:#f1f5f9;margin-left:10px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin:18px 0 58px}
+    article{border:1px solid #334155;background:#151e2b;border-radius:12px;padding:22px}article p{margin:0}
+    .note{border-left:3px solid #2eb39d;padding-left:20px;margin-bottom:58px}footer{border-top:1px solid #334155;color:#94a3b8;font-size:.9rem}
+  </style>
+</head>
+<body>
+  <header><div class="brand">OKSwitch</div><nav><a href="#features">功能</a><a href="privacy.html">隐私政策</a><a href="https://github.com/LuffyZhu/OKSwitch">源代码</a></nav></header>
+  <main>
+    <section class="hero"><h1>在 Switch 上看视频</h1><p>OKSwitch 是独立开发的 Nintendo Switch 自制媒体应用。用户可以自行配置影视来源，观看体育直播，并在 YouTube 页面搜索、播放视频。此项目与 Nintendo、Google 或 YouTube 没有隶属关系。</p><a class="button" href="https://github.com/LuffyZhu/OKSwitch/releases">下载最新版本</a><a class="button secondary" href="https://github.com/LuffyZhu/OKSwitch#安装">安装说明</a></section>
+    <section id="features"><h2>功能与账号数据</h2><div class="grid">
+      <article><h2>自行配置视频源</h2><p>影视配置地址由用户提供，可在 Switch 上输入，也可通过同一局域网的手机扫码输入。</p></article>
+      <article><h2>YouTube 浏览</h2><p>游客可搜索和观看公开内容。使用自己的 Google 账号配对后，应用尝试读取账号相关的订阅、推荐和观看历史。部分功能依赖 YouTube 的非公开接口，可能发生变化。</p></article>
+      <article><h2>本地存储</h2><p>账号令牌、设置、搜索和观看记录存放在用户的 Switch SD 卡上。应用不会要求用户把 Google 密码输入 OKSwitch。</p></article>
+    </div></section>
+    <section class="note"><h2>了解数据如何使用</h2><p>登录 YouTube 时，OKSwitch 会把授权令牌发送给 Google 或 YouTube 来请求用户选择的内容。详情请阅读 <a href="privacy.html">OKSwitch 隐私政策</a>。</p></section>
+  </main>
+  <footer><a href="privacy.html">隐私政策</a> · <a href="https://github.com/LuffyZhu/OKSwitch/issues">联系开发者</a> · <a href="https://github.com/LuffyZhu/OKSwitch">GitHub</a></footer>
+</body>
+</html>
