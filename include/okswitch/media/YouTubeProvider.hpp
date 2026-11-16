@@ -95,6 +95,7 @@ private:
     std::string value_, clientId_, clientSecret_, refreshToken_, token_, tvRefreshToken_, tvToken_, proxyUrl_;
     std::string cookie_;
     std::string rejectedCookie_;
+    std::string tvRefreshError_;
     std::string profileImageUrl_;
     std::string profileStatus_;
     std::string profileToken_, profileProxy_, profileRefreshToken_, profileClientId_, profileClientSecret_;

@@ -293,7 +293,7 @@ void YouTubeProvider::channelVideos(const std::string& value){if(!mutex_)return;
 void YouTubeProvider::playback(const std::string& value){if(!mutex_)return;SDL_LockMutex(mutex_);++serial_;action_=Action::Playback;value_=value;pending_=true;ready_=false;cancel_.store(true);SDL_CondSignal(condition_);SDL_UnlockMutex(mutex_);}
 void YouTubeProvider::beginLogin(){if(!mutex_)return;SDL_LockMutex(mutex_);++serial_;action_=Action::Login;value_.clear();pending_=true;ready_=false;login_={};login_.running=true;login_.message="正在申请配对码...";profileImageUrl_.clear();profileAttempted_=false;cancel_.store(true);SDL_CondSignal(condition_);SDL_UnlockMutex(mutex_);std::remove(profilePath);}
 void YouTubeProvider::beginTvLoginProbe(){if(!mutex_)return;SDL_LockMutex(mutex_);++serial_;action_=Action::TvLoginProbe;value_.clear();pending_=true;ready_=false;login_={};login_.running=true;login_.message="正在申请电视端实验配对码...";profileImageUrl_.clear();profileAttempted_=false;cancel_.store(true);SDL_CondSignal(condition_);SDL_UnlockMutex(mutex_);std::remove(profilePath);}
-void YouTubeProvider::signOut(){cancel();profileCancel_.store(true);authenticated_.store(false);refreshToken_.clear();token_.clear();tokenExpires_=0;tvRefreshToken_.clear();tvToken_.clear();tvTokenExpires_=0;SDL_LockMutex(mutex_);cookie_.clear();rejectedCookie_.clear();profileImageUrl_.clear();profileAttempted_=false;accountBrowseScopeDenied_=false;listCache_.clear();SDL_UnlockMutex(mutex_);std::remove(cookiePath);std::remove(sessionPath);std::remove(tvSessionPath);std::remove(profilePath);setLoginState({false,false,"","","已退出 YouTube 账号"});}
+void YouTubeProvider::signOut(){cancel();profileCancel_.store(true);authenticated_.store(false);refreshToken_.clear();token_.clear();tokenExpires_=0;tvRefreshToken_.clear();tvToken_.clear();tvTokenExpires_=0;tvRefreshError_.clear();SDL_LockMutex(mutex_);cookie_.clear();rejectedCookie_.clear();profileImageUrl_.clear();profileAttempted_=false;accountBrowseScopeDenied_=false;listCache_.clear();SDL_UnlockMutex(mutex_);std::remove(cookiePath);std::remove(sessionPath);std::remove(tvSessionPath);std::remove(profilePath);setLoginState({false,false,"","","已退出 YouTube 账号"});}
 bool YouTubeProvider::poll(YouTubeResult& value){if(!mutex_)return false;SDL_LockMutex(mutex_);bool ready=ready_;if(ready){value=std::move(result_);ready_=false;}SDL_UnlockMutex(mutex_);return ready;}
 YouTubeLoginState YouTubeProvider::loginState(){if(!mutex_)return {};SDL_LockMutex(mutex_);auto value=login_;SDL_UnlockMutex(mutex_);return value;}
 std::string YouTubeProvider::profileImage(){if(!mutex_)return {};SDL_LockMutex(mutex_);auto value=profileImageUrl_;SDL_UnlockMutex(mutex_);return value;}
@@ -422,7 +422,7 @@ YouTubeResult YouTubeProvider::homeNow(){
     if((!clientId_.empty()&&(!refreshToken_.empty()||!tvRefreshToken_.empty()||!tvToken_.empty()))||!webCookie.empty()){
         auto personal=personalBrowseNow("default","/","账号推荐");
         if(personal.succeeded||cancel_.load())return personal;
-        if(!clientId_.empty()&&!refreshToken_.empty()){
+        if(tvRefreshError_.empty()&&!clientId_.empty()&&!refreshToken_.empty()){
             auto channels=subscriptionsNow(1);
             if(channels.succeeded){channels.message="推荐暂不可用 · 已显示订阅频道";return channels;}
         }
@@ -471,7 +471,7 @@ YouTubeResult YouTubeProvider::accountBrowseNow(const char* browseId,const char*
     const bool hasTvSession=!tvRefreshToken_.empty()||!tvToken_.empty();
     if(!hasTvSession&&accountBrowseScopeDenied_){result.error="当前授权范围不支持电视端推荐和历史";return result;}
     const auto token=hasTvSession?tvBrowseToken():accessToken();
-    if(token.empty()){result.error="配对登录已失效";return result;}
+    if(token.empty()){result.error=hasTvSession&&!tvRefreshError_.empty()?tvRefreshError_:"配对登录暂不可用，请检查网络或重新配对";return result;}
     auto* body=json_pack("{s:{s:{s:s,s:s,s:s,s:s,s:s},s:{s:b,s:b}},s:{s:s,s:b},s:b,s:b,s:s}",
         "context","client","clientName","TVHTML5","clientVersion",tvVersion,"clientScreen","WATCH",
         "userAgent",tvAgent,"hl","zh-CN","user","enableSafetyMode",0,"lockedSafetyMode",0,
@@ -707,6 +707,7 @@ std::string YouTubeProvider::accessToken(){if(token_.empty()||std::time(nullptr)
 std::string YouTubeProvider::tvBrowseToken(){
     if(!tvToken_.empty()&&std::time(nullptr)<tvTokenExpires_)return tvToken_;
     if(tvRefreshToken_.empty()||clientId_.empty()||clientSecret_.empty())return {};
+    tvRefreshError_.clear();
     tvToken_.clear();
     auto* body=json_pack("{s:s,s:s,s:s,s:s}","refresh_token",tvRefreshToken_.c_str(),
         "client_id",clientId_.c_str(),"client_secret",clientSecret_.c_str(),"grant_type","refresh_token");
@@ -716,11 +717,20 @@ std::string YouTubeProvider::tvBrowseToken(){
     req.body=raw;free(raw);req.proxyUrl=proxy();req.cancel=&cancel_;
     req.headers={{"Content-Type","application/json"}};req.maxResponseBytes=256*1024;
     const auto response=http_.get(req);
-    if(!response.succeeded)return {};
+    if(!response.succeeded){
+        auto* errorRoot=parse(response.body);
+        const auto error=field(errorRoot,"error");
+        if(errorRoot)json_decref(errorRoot);
+        tvRefreshError_=error=="invalid_grant"
+            ?"电视端登录已过期 · 请在设置的 YouTube 账号按 + 重新配对"
+            :"电视端登录刷新失败 · "+responseError(response);
+        return {};
+    }
     auto* root=parse(response.body);tvToken_=field(root,"access_token");
     const auto duration=json_integer_value(json_object_get(root,"expires_in"));
     tvTokenExpires_=std::time(nullptr)+std::max<json_int_t>(60,duration)-60;
     if(root)json_decref(root);
+    if(tvToken_.empty())tvRefreshError_="电视端登录刷新未返回令牌 · 请重新配对";
     return tvToken_;
 }
 YouTubeResult YouTubeProvider::subscriptionsNow(int maxPages){
@@ -895,7 +905,7 @@ YouTubeResult YouTubeProvider::tvLoginProbeNow(){
     if(successes>0){
         tvToken_=access;tvTokenExpires_=std::time(nullptr)+std::max(60,tokenDuration)-60;
         if(!refresh.empty()&&saveTvSession(refresh)){
-            tvRefreshToken_=refresh;authenticated_.store(true);clearListCache();
+            tvRefreshToken_=refresh;tvRefreshError_.clear();authenticated_.store(true);clearListCache();
             details+="电视端登录已保存";
         }else details+="电视端数据可读，但令牌未保存";
     }

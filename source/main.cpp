@@ -893,9 +893,9 @@ auto settingsYouTubeLogin=[&](bool tvProbe=false){
     }
     youtube.cancel();return std::string("已取消 YouTube 配对");
 };
-auto settingsLanSubscription=[&](std::string& url,bool oauthConfig=false)->std::string{
+auto settingsLanSubscription=[&](std::string& url,net::LanTextInput::Mode mode=net::LanTextInput::Mode::Subscription)->std::string{
     if(!netReady)return "网络尚未就绪";
-    net::LanTextInput input(oauthConfig);std::string error;
+    net::LanTextInput input(mode);std::string error;
     if(!input.start(error))return error;
     uint8_t temporary[qrcodegen_BUFFER_LEN_MAX]{},qr[qrcodegen_BUFFER_LEN_MAX]{};
     const bool encoded=qrcodegen_encodeText(input.url().c_str(),temporary,qr,qrcodegen_Ecc_LOW,
@@ -905,14 +905,15 @@ auto settingsLanSubscription=[&](std::string& url,bool oauthConfig=false)->std::
     while(appletMainLoop()&&!input.completed()){
         padUpdate(&pad);if(padGetButtonsDown(&pad)&HidNpadButton_B){input.stop();return "已取消手机输入";}
         SDL_SetRenderDrawColor(r,18,24,38,255);SDL_RenderClear(r);
-        text(r,f,oauthConfig?"YouTube 客户端 · 手机扫码导入":"机场订阅 · 手机扫码输入",365,48,700,true);
+        text(r,f,mode==net::LanTextInput::Mode::OAuthConfig?"YouTube 客户端 · 手机扫码导入":
+            mode==net::LanTextInput::Mode::SourceConfig?"视频源配置 · 手机扫码输入":"机场订阅 · 手机扫码输入",365,48,700,true);
         const int cell=std::max(1,390/(size+8)),pixels=cell*(size+8),x=(1280-pixels)/2,y=122;
         SDL_SetRenderDrawColor(r,255,255,255,255);SDL_Rect paper{x,y,pixels,pixels};SDL_RenderFillRect(r,&paper);
         SDL_SetRenderDrawColor(r,0,0,0,255);
         for(int row=0;row<size;++row)for(int col=0;col<size;++col)
             if(qrcodegen_getModule(qr,col,row)){SDL_Rect dot{x+(col+4)*cell,y+(row+4)*cell,cell,cell};SDL_RenderFillRect(r,&dot);}
         text(r,f,input.url(),(1280-textWidth(f,input.url()))/2,535,1120,true);
-        text(r,f,oauthConfig?"同一局域网 · 粘贴 Google 客户端 JSON · B 取消":"手机和 Switch 连接同一局域网 · 粘贴链接后发送 · B 取消",180,605,1000,true);
+        text(r,f,mode==net::LanTextInput::Mode::OAuthConfig?"同一局域网 · 粘贴 Google 客户端 JSON · B 取消":"手机和 Switch 连接同一局域网 · 粘贴链接后发送 · B 取消",180,605,1000,true);
         SDL_RenderPresent(r);SDL_Delay(16);
     }
     const bool received=input.completed();
@@ -921,7 +922,7 @@ auto settingsLanSubscription=[&](std::string& url,bool oauthConfig=false)->std::
     return received?"":"已取消手机输入";
 };
 auto importYoutubeOAuth=[&]()->std::string{
-    std::string raw;const std::string cancelled=settingsLanSubscription(raw,true);
+    std::string raw;const std::string cancelled=settingsLanSubscription(raw,net::LanTextInput::Mode::OAuthConfig);
     if(!cancelled.empty())return cancelled;
     json_error_t parseError{};json_t* root=json_loadb(raw.data(),raw.size(),0,&parseError);
     if(!root)return "客户端 JSON 格式错误";
@@ -1104,6 +1105,13 @@ auto openSettings=[&](){
             }
             else if((key&HidNpadButton_Y)&&row==6){message=settingsSubscription(true);
             }
+            else if((key&HidNpadButton_Y)&&row==7){
+                std::string candidate;message=settingsLanSubscription(candidate,net::LanTextInput::Mode::SourceConfig);
+                if(message.empty()){
+                    if(!saveSourceUrl(candidate))message="地址保存失败，请检查 SD 卡";
+                    else{sourceConfigUrl=candidate;sourceConfigLoader.request(candidate);status="正在加载视频源配置...";break;}
+                }
+            }
             else if((key&HidNpadButton_Plus)&&row==3){message=settingsYouTubeLogin(true);
             }
             else if(key&HidNpadButton_A){
@@ -1167,7 +1175,7 @@ auto openSettings=[&](){
         for(int i=0;i<11;++i){SDL_Rect box{60,77+i*48,1160,43};SDL_SetRenderDrawColor(r,i==row?55:28,i==row?150:46,i==row?125:68,255);SDL_RenderFillRect(r,&box);text(r,f,names[i],85,box.y+9,350,true);
             text(r,f,i<4?(logged[i]?"已有登录信息":i==3&&!youtube.configured()?"未配置配对码客户端":"未登录"):i==4?(autoPlayNext?"开启":"关闭"):i==5?(!youtubeSubscriptionName.empty()?"当前使用订阅节点":subscriptionBoot.thread?"订阅连接中":youtubeProxyUrl.empty()?"直连（不使用代理）":youtubeProxyUrl):i==6?(youtubeSubscriptionUrl.empty()?"未配置":subscriptionBoot.thread?"正在连接...":youtubeSubscriptionName.empty()?"已配置 · 未连接":"已启用 · "+youtubeSubscriptionName):i==7?(sourceConfigUrl.empty()?"未配置":sourceConfigUrl):i==8?"立即更新来源列表":i==9?"清除已保存的地址":"经当前 YouTube 代理检查和下载",455,box.y+9,740,true);
         }
-        text(r,f,message,65,615,1150,true);text(r,f,row==6?"A 选择节点 · Y 扫码设置地址 · X 清除订阅 · B 返回":row==3?"A 现有配对 · + 电视端实验 · Y 导入客户端 · X 退出 · B 返回":"上下选择 · A 登录／修改 · X 退出账号 · B 返回",65,665,1150,true);
+        text(r,f,message,65,615,1150,true);text(r,f,row==6?"A 选择节点 · Y 扫码设置地址 · X 清除订阅 · B 返回":row==7?"A 手柄输入 · Y 局域网扫码输入 · B 返回":row==3?"A 现有配对 · + 电视端实验 · Y 导入客户端 · X 退出 · B 返回":"上下选择 · A 登录／修改 · X 退出账号 · B 返回",65,665,1150,true);
         if(confirmLogout){SDL_SetRenderDrawColor(r,12,21,32,255);SDL_Rect dialog{240,250,800,200};SDL_RenderFillRect(r,&dialog);std::string title=std::string("退出 ")+names[row]+" 的登录？";text(r,f,title,(1280-textWidth(f,title))/2,290,760,true);text(r,f,"A 确认退出    B 取消",465,375,600,true);}
         SDL_RenderPresent(r);SDL_Delay(16);
     }

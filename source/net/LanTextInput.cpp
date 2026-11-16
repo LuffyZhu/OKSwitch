@@ -103,8 +103,9 @@ void LanTextInput::serve(int client){
     if(get){
         const std::string page=std::string("<!doctype html><html lang=zh><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>OKSwitch 局域网输入</title>")+
             "<style>body{font:18px system-ui;background:#121826;color:#f6f8fa;max-width:620px;margin:8vh auto;padding:22px}input,button{font:inherit;box-sizing:border-box;width:100%;padding:15px;border-radius:8px;margin:12px 0}input{background:#fff;border:0}button{background:#32b294;color:white;border:0}</style>"
-            +(oauthConfig_?"<h2>OKSwitch · YouTube 客户端</h2><p>粘贴 Google Cloud 下载的电视设备客户端 JSON。只在此页面打开时接收。</p><form method=post><textarea name=url required maxlength=4096 rows=9 style='width:100%'></textarea><button>发送到 Switch</button></form>"
-                         :"<h2>OKSwitch · 机场订阅</h2><p>手机和 Switch 请连接同一局域网。在下方粘贴完整的 HTTPS 订阅链接。</p><form method=post><input name=url type=url required maxlength=2048 placeholder='https://...' autocomplete=off><button>发送到 Switch</button></form>")
+            +(mode_==Mode::OAuthConfig?"<h2>OKSwitch · YouTube 客户端</h2><p>粘贴 Google Cloud 下载的电视设备客户端 JSON。只在此页面打开时接收。</p><form method=post><textarea name=url required maxlength=4096 rows=9 style='width:100%'></textarea><button>发送到 Switch</button></form>"
+              :mode_==Mode::SourceConfig?"<h2>OKSwitch · 视频源配置</h2><p>手机和 Switch 请连接同一局域网。在下方粘贴完整的配置地址。</p><form method=post><input name=url type=url required maxlength=2048 placeholder='https://...' autocomplete=off><button>发送到 Switch</button></form>"
+              :"<h2>OKSwitch · 机场订阅</h2><p>手机和 Switch 请连接同一局域网。在下方粘贴完整的 HTTPS 订阅链接。</p><form method=post><input name=url type=url required maxlength=2048 placeholder='https://...' autocomplete=off><button>发送到 Switch</button></form>")
             +"<p>页面仅在 Switch 显示二维码时有效。</p></html>";
         respond(client,200,page);return;
     }
@@ -129,11 +130,15 @@ void LanTextInput::serve(int client){
     if(field==std::string::npos||(field>0&&body[field-1]!='&')){respond(client,400,"Missing URL","text/plain");return;}
     const size_t end=body.find('&',field);
     const std::string value=decode(body.substr(field+4,end==std::string::npos?std::string::npos:end-field-4));
-    if(!oauthConfig_&&(value.size()>2048||value.rfind("https://",0)!=0||value.find_first_of("\r\n\t ")!=std::string::npos)){
-        respond(client,400,"请输入完整的 HTTPS 订阅链接","text/plain; charset=utf-8");return;
+    if(mode_!=Mode::OAuthConfig&&(value.size()>2048||value.find_first_of("\r\n\t ")!=std::string::npos||
+        (mode_==Mode::Subscription?value.rfind("https://",0)!=0:
+         value.rfind("https://",0)!=0&&value.rfind("http://",0)!=0))){
+        respond(client,400,mode_==Mode::SourceConfig?"请输入完整的 HTTP 或 HTTPS 配置地址":"请输入完整的 HTTPS 订阅链接","text/plain; charset=utf-8");return;
     }
     value_=value;
-    respond(client,200,"<!doctype html><html lang=zh><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>OKSwitch</title><h2>已发送到 Switch</h2><p>请回到 Switch 选择节点。</p></html>");
+    respond(client,200,mode_==Mode::SourceConfig
+        ?"<!doctype html><html lang=zh><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>OKSwitch</title><h2>已发送到 Switch</h2><p>请回到 Switch 查看视频源加载结果。</p></html>"
+        :"<!doctype html><html lang=zh><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>OKSwitch</title><h2>已发送到 Switch</h2><p>请回到 Switch 继续操作。</p></html>");
     completed_.store(true,std::memory_order_release);
 }
 }

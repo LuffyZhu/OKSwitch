@@ -7,7 +7,8 @@ namespace okswitch::net {
 // One-use local HTTP form. The listener exists only while the QR screen is open.
 class LanTextInput {
 public:
-    explicit LanTextInput(bool oauthConfig=false):oauthConfig_(oauthConfig){}
+    enum class Mode { Subscription, OAuthConfig, SourceConfig };
+    explicit LanTextInput(Mode mode=Mode::Subscription):mode_(mode){}
     ~LanTextInput(){stop();}
     bool start(std::string& error);
     void stop();
@@ -21,6 +22,6 @@ private:
     SDL_Thread* thread_=nullptr;
     std::atomic<bool> stopping_{false},completed_{false};
     std::string token_,url_,value_;
-    bool oauthConfig_=false;
+    Mode mode_=Mode::Subscription;
 };
 }
