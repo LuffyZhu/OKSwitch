@@ -20,9 +20,9 @@ AnyTLS：Clash YAML 中的内联节点。
 
 ## 在线更新
 
-进入「− 设置 → 在线更新」，OKSwitch 会读取本仓库的 [`update.json`](update.json)，通过当前 YouTube 代理下载 Release 安装包，验证文件大小与 SHA-256 后替换 SD 卡上的 NRO。退出并重新打开后生效。直连网络下，更新请求也直连。当前支持 `/switch/OKSwitch.nro` 与 `/switch/OKSwitch/OKSwitch.nro` 两种位置。
+进入「− 设置 → 在线更新」，OKSwitch 会读取本仓库的 [`update.json`](update.json)，通过当前 YouTube 代理下载 Release 安装包。下载中断后可续传；文件大小与 SHA-256 校验通过后，按 A 退出，由更新程序替换 SD 卡上的 NRO 并重新启动。直连网络下，更新请求也直连。当前支持 `/switch/OKSwitch.nro` 与 `/switch/OKSwitch/OKSwitch.nro` 两种位置。自动安装需要启动器支持 NRO 接续加载。
 
-首次安装及此版本的更新入口需要手动替换 NRO；之后可在应用内更新。发布者的步骤见 [发布说明](docs/RELEASING.md)。
+从 v1.1.1 升级到 v1.1.2 需要手动替换一次 NRO；v1.1.1 的更新入口会在替换正在运行的文件时失败。之后可在应用内更新。发布者的步骤见 [发布说明](docs/RELEASING.md)。
 
 ## 构建
 

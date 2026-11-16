@@ -103,7 +103,11 @@ SDL_Texture* bundledPng(SDL_Renderer* renderer,const char* path,
 }
 constexpr const char* defaultSourceUrl="";
 constexpr const char* settingsPath="sdmc:/switch/OKSwitch/settings.json";
-std::string installedNroPath(){
+std::string installedNroPath(const char* runningPath){
+    if(runningPath){
+        const std::string active=runningPath;
+        if(active=="sdmc:/switch/OKSwitch.nro"||active=="sdmc:/switch/OKSwitch/OKSwitch.nro")return active;
+    }
     for(const char* path:{"sdmc:/switch/OKSwitch.nro","sdmc:/switch/OKSwitch/OKSwitch.nro"}){
         FILE* file=std::fopen(path,"rb");if(file){std::fclose(file);return path;}
     }
@@ -468,7 +472,21 @@ std::string findFrameRate(const std::string& value){
     return "未提供";
 }
 }
-int main(){
+int main(int argc,char** argv){
+if(argc==4&&std::string(argv[1])=="--apply-update"){
+    std::string error;
+    const bool installed=net::OnlineUpdater::applyStaged(argv[0],argv[2],argv[3],error);
+    const char* errorPath="sdmc:/switch/OKSwitch/update-error.txt";
+    if(installed)std::remove(errorPath);
+    else if(FILE* file=std::fopen(errorPath,"wb")){
+        std::fwrite(error.data(),1,error.size(),file);
+        std::fclose(file);
+    }
+    // This copy is running from *.update.nro, so the installed path is no
+    // longer in use. Return to the loader before opening the installed copy.
+    if(envHasNextLoad()&&R_SUCCEEDED(envSetNextLoad(argv[2],argv[2])))return installed?0:1;
+    return 1;
+}
 const bool appletMode=appletGetAppletType()!=AppletType_Application;
 if(SDL_Init(SDL_INIT_VIDEO|(appletMode?0:SDL_INIT_AUDIO))<0)return 1;
 TTF_Init();plInitialize(PlServiceType_User);PlFontData fd{};if(R_FAILED(plGetSharedFontByType(&fd,PlSharedFontType_Standard)))return 1;TTF_Font*f=TTF_OpenFontRW(SDL_RWFromConstMem(fd.address,(int)fd.size),1,18);
@@ -1059,8 +1077,14 @@ auto settingsSubscription=[&](bool fromLan)->std::string{
     }
     return "已取消节点选择";
 };
+bool exitForUpdate=false;
 auto openSettings=[&](){
     int row=0;bool confirmLogout=false;std::string message="选择账号登录，或调整播放与视频源设置";
+    if(FILE* file=std::fopen("sdmc:/switch/OKSwitch/update-error.txt","rb")){
+        char buffer[256]{};const size_t count=std::fread(buffer,1,sizeof(buffer)-1,file);
+        std::fclose(file);std::remove("sdmc:/switch/OKSwitch/update-error.txt");
+        if(count)message="上次安装失败："+std::string(buffer,count);
+    }
     const char* names[]={"夸克网盘","百度网盘","咪咕视频","YouTube 账号","自动播放下集","YouTube 网络代理","YouTube 机场订阅","视频源配置地址","重新加载视频源","清除视频源地址","在线更新"};
     while(appletMainLoop()){
         padUpdate(&pad);
@@ -1139,7 +1163,7 @@ auto openSettings=[&](){
                 }else if(row==10){
                     if(!netReady)message="网络尚未就绪";
                     else{
-                        net::OnlineUpdater updater(http,youtube.currentProxy(),installedNroPath());
+                        net::OnlineUpdater updater(http,youtube.currentProxy(),installedNroPath(argc>0?argv[0]:nullptr));
                         if(!updater.start())message="无法启动更新检查";
                         else{
                             while(appletMainLoop()){
@@ -1149,12 +1173,26 @@ auto openSettings=[&](){
                                 text(r,f,"OKSwitch · 在线更新",65,55,1100,true);
                                 text(r,f,updater.message(),65,180,1120,true);
                                 text(r,f,std::to_string(updater.percent())+"%",65,250,500,true);
-                                text(r,f,updater.done()?"A 返回设置":"B 取消下载",65,650,1100,true);
+                                text(r,f,updater.done()?(updater.staged()?"A 退出并安装":"A 返回设置"):"B 暂停下载",65,650,1100,true);
                                 SDL_RenderPresent(r);
-                                if(updater.done()&&(padGetButtonsDown(&pad)&HidNpadButton_A))break;
+                                if(updater.done()&&(padGetButtonsDown(&pad)&HidNpadButton_A)){
+                                    if(updater.staged()){
+                                        if(!envHasNextLoad())message="当前启动器不支持自动安装，请手动替换 NRO";
+                                        else{
+                                            const std::string args=updater.stagedPath()+" --apply-update "+updater.installedPath()+" "+updater.expectedHash();
+                                            const Result rc=envSetNextLoad(updater.stagedPath().c_str(),args.c_str());
+                                            if(R_FAILED(rc))message="无法启动安装程序："+std::to_string(rc);
+                                            else exitForUpdate=true;
+                                        }
+                                    }
+                                    break;
+                                }
                                 SDL_Delay(32);
                             }
-                            if(!updater.done())updater.cancel();updater.join();message=updater.message();
+                            if(!updater.done())updater.cancel();
+                            updater.join();
+                            if(message.empty()||!updater.staged()||exitForUpdate)message=updater.message();
+                            if(exitForUpdate)break;
                         }
                     }
                 }else{
@@ -1229,7 +1267,7 @@ while(appletMainLoop()){padUpdate(&pad);u64 k=padGetButtonsDown(&pad);const u64 
 HidAnalogStickState stick=padGetStickPos(&pad,0);int absX=stick.x<0?-stick.x:stick.x,absY=stick.y<0?-stick.y:stick.y;int nextStick=0;
 if(absX>16000||absY>16000)nextStick=absX>absY?(stick.x>0?1:2):(stick.y>0?3:4);
 Uint32 now=SDL_GetTicks();if(nextStick){bool fire=nextStick!=stickDirection||SDL_TICKS_PASSED(now,stickRepeatAt);if(fire){k|=nextStick==1?HidNpadButton_Right:nextStick==2?HidNpadButton_Left:nextStick==3?HidNpadButton_Up:HidNpadButton_Down;stickRepeatAt=now+(nextStick!=stickDirection?320:110);}stickDirection=nextStick;}else stickDirection=0;
-if(k&HidNpadButton_Minus){openSettings();if(view==View::Browse&&categories[category].kind==9)loadBrowse();k=0;}
+if(k&HidNpadButton_Minus){openSettings();if(exitForUpdate)break;if(view==View::Browse&&categories[category].kind==9)loadBrowse();k=0;}
 if(youtubeHomeWaitingForProxy&&(!subscriptionBoot.thread||subscriptionBoot.done.load())){
     if(view==View::Browse&&categories[category].kind==9&&youtubePage==YouTubePage::Explore)
         requestYoutubeHome();
