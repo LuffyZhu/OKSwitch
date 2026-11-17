@@ -19,7 +19,16 @@ struct PlaybackResult
     int volumePercent = 100;
     int episodeDelta = 0;
     int requestedQualityIndex = -1;
+    std::string requestedLiveChannelId;
     std::string error;
+};
+
+struct LiveChannelMenuItem
+{
+    std::string id;
+    std::string name;
+    std::string group;
+    bool favorite = false;
 };
 
 struct PlaybackOptions
@@ -32,6 +41,9 @@ struct PlaybackOptions
     bool canPrevious = false;
     bool canNext = false;
     std::vector<std::string> liveQualityLabels;
+    std::vector<LiveChannelMenuItem> liveChannels;
+    std::string currentLiveChannelId;
+    std::function<bool(const std::string&)> toggleLiveFavorite;
     int currentQualityIndex = 0;
     std::function<int(const std::string&)> measureText;
     std::function<void(int, int, int)> onPreferencesChanged;

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "okswitch/media/MediaSource.hpp"
+#include "okswitch/media/CctvLiveProvider.hpp"
 #include "okswitch/net/HttpClient.hpp"
 
 namespace okswitch::media {
@@ -15,6 +16,8 @@ struct SourceConfigResult {
     std::string error;
     std::vector<SourceDefinition> sources;
     std::vector<std::string> footballSources;
+    std::vector<CctvChannel> liveChannels;
+    size_t livePlaylists=0;
     size_t totalSites=0;
 };
 

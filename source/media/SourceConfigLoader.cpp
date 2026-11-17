@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <jansson.h>
+#include <sstream>
 
 namespace okswitch::media {
 namespace {
@@ -43,6 +44,65 @@ constexpr NativeSource nativeSources[]={
 const char* jsonString(json_t* object,const char* key){
     json_t* value=json_object_get(object,key);
     return json_is_string(value)?json_string_value(value):"";
+}
+std::string trim(std::string value){
+    const auto first=value.find_first_not_of(" \t\r\n");
+    if(first==std::string::npos)return {};
+    const auto last=value.find_last_not_of(" \t\r\n");
+    return value.substr(first,last-first+1);
+}
+std::string m3uAttribute(const std::string& line,const char* key){
+    const std::string prefix=std::string(key)+"=\"";
+    const auto start=line.find(prefix);
+    if(start==std::string::npos)return {};
+    const auto valueStart=start+prefix.size();
+    const auto end=line.find('"',valueStart);
+    return end==std::string::npos?std::string():line.substr(valueStart,end-valueStart);
+}
+std::string relativeUrl(const std::string& base,const std::string& value){
+    if(value.rfind("http://",0)==0||value.rfind("https://",0)==0
+        ||value.rfind("rtmp://",0)==0||value.rfind("rtmps://",0)==0)return value;
+    const auto scheme=base.find("://");if(scheme==std::string::npos)return {};
+    const auto hostEnd=base.find('/',scheme+3);
+    if(!value.empty()&&value.front()=='/')return base.substr(0,hostEnd)+value;
+    const auto query=base.find('?');const auto path=base.substr(0,query);
+    const auto slash=path.rfind('/');return slash==std::string::npos?std::string():path.substr(0,slash+1)+value;
+}
+void appendLivePlaylist(SourceConfigResult& result,const std::string& body,
+    const std::string& playlistUrl,const std::string& listName,const std::string& userAgent){
+    if(body.find("#EXTM3U")==std::string::npos)return;
+    std::istringstream lines(body);std::string line,name,group,itemUserAgent;
+    size_t imported=0;
+    while(std::getline(lines,line)){
+        line=trim(std::move(line));if(line.empty())continue;
+        if(line.rfind("#EXTINF:",0)==0){
+            const auto comma=line.rfind(',');
+            name=comma==std::string::npos?std::string():trim(line.substr(comma+1));
+            group=m3uAttribute(line,"group-title");
+            itemUserAgent=m3uAttribute(line,"http-user-agent");
+            if(group.empty())group="其他频道";
+            continue;
+        }
+        if(line.front()=='#'||name.empty())continue;
+        const std::string url=relativeUrl(playlistUrl,line);
+        if(url.empty()){name.clear();continue;}
+        if(name.find("五星体育")!=std::string::npos){name.clear();continue;}
+        const std::string id="live:"+listName+"/"+group+"/"+name;
+        auto existing=std::find_if(result.liveChannels.begin(),result.liveChannels.end(),
+            [&](const CctvChannel& channel){return channel.id==id;});
+        if(existing==result.liveChannels.end()){
+            CctvChannel channel;channel.id=id;channel.name=name;
+            channel.group=listName+" · "+group;
+            const std::string effectiveAgent=itemUserAgent.empty()?userAgent:itemUserAgent;
+            if(!effectiveAgent.empty())channel.headers.push_back({"User-Agent",effectiveAgent});
+            result.liveChannels.push_back(std::move(channel));
+            existing=std::prev(result.liveChannels.end());
+            ++imported;
+        }
+        if(std::find(existing->urls.begin(),existing->urls.end(),url)==existing->urls.end())existing->urls.push_back(url);
+        name.clear();
+    }
+    if(imported)++result.livePlaylists;
 }
 }
 
@@ -98,6 +158,35 @@ SourceConfigResult SourceConfigLoader::load(const std::string& url){
     json_t* sites=json_object_get(root,"sites");
     if(!json_is_array(sites)){json_decref(root);result.error="在线配置缺少 sites";return result;}
     result.totalSites=json_array_size(sites);
+
+    // TVBox's lives entries point to M3U playlists. Fetch them on this worker
+    // so a large channel list never blocks the main screen. A failed list does
+    // not hide channels from other lists or the built-in CCTV routes.
+    json_t* lives=json_object_get(root,"lives");
+    if(json_is_array(lives))for(size_t i=0;i<json_array_size(lives)&&!cancel_.load();++i){
+        json_t* live=json_array_get(lives,i);if(!json_is_object(live))continue;
+        const std::string name=jsonString(live,"name");
+        const std::string playlist=jsonString(live,"url");
+        if(playlist.rfind("http://",0)!=0&&playlist.rfind("https://",0)!=0)continue;
+        const std::string userAgent=jsonString(live,"ua");
+        net::HttpRequest listRequest;listRequest.url=playlist;listRequest.cancel=&cancel_;
+        listRequest.connectTimeoutSeconds=5;listRequest.timeoutSeconds=12;
+        listRequest.maxResponseBytes=2*1024*1024;
+        if(!userAgent.empty())listRequest.headers.push_back({"User-Agent",userAgent});
+        auto list=httpClient_.get(listRequest);
+        // The configuration's raw.githubusercontent.com mirror can return
+        // 403 while the original GitHub raw file remains available.
+        if(!list.succeeded){
+            constexpr const char* mirror="https://down.nigx.cn/raw.githubusercontent.com/";
+            if(playlist.rfind(mirror,0)==0){
+                listRequest.url="https://raw.githubusercontent.com/"+playlist.substr(std::char_traits<char>::length(mirror));
+                list=httpClient_.get(listRequest);
+            }
+        }
+        if(list.succeeded)appendLivePlaylist(result,list.body,
+            list.effectiveUrl.empty()?listRequest.url:list.effectiveUrl,
+            name.empty()?"直播":name,userAgent);
+    }
 
     // The guarded plugin downloads an item document which points at a small
     // JSON endpoint map. Following this public chain lets native providers

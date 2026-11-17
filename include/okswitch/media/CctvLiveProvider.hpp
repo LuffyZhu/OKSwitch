@@ -12,6 +12,9 @@ struct CctvChannel
 {
     std::string id;
     std::string name;
+    std::string group;
+    std::vector<std::string> urls;
+    std::vector<cloud::RequestHeader> headers;
 };
 
 class CctvLiveProvider
@@ -21,6 +24,7 @@ public:
 
     std::vector<CctvChannel> channels() const;
     cloud::ProviderResult<cloud::PlaybackSource> playback(const std::string& channel) const;
+    cloud::ProviderResult<cloud::PlaybackSource> playback(const CctvChannel& channel) const;
 
 private:
     net::HttpClient& httpClient_;

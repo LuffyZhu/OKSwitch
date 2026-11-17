@@ -176,6 +176,22 @@ bool saveSetting(const char* key,json_t* value){
     return ok;
 }
 bool saveSourceUrl(const std::string& url){return saveSetting("sourceUrl",json_string(url.c_str()));}
+std::vector<std::string> loadLiveFavorites(){
+    std::vector<std::string> ids;json_error_t error{};
+    json_t* root=json_load_file(settingsPath,0,&error);
+    json_t* entries=json_object_get(root,"liveFavorites");
+    if(json_is_array(entries))for(size_t i=0;i<json_array_size(entries);++i){
+        json_t* value=json_array_get(entries,i);
+        if(json_is_string(value))ids.emplace_back(json_string_value(value));
+    }
+    if(root)json_decref(root);
+    return ids;
+}
+bool saveLiveFavorites(const std::vector<std::string>& ids){
+    json_t* entries=json_array();if(!entries)return false;
+    for(const auto& id:ids)json_array_append_new(entries,json_string(id.c_str()));
+    return saveSetting("liveFavorites",entries);
+}
 bool saveAutoPlayNext(bool enabled){return saveSetting("autoPlayNext",json_boolean(enabled));}
 bool saveYoutubeProxy(const std::string& url){return saveSetting("youtubeProxy",json_string(url.c_str()));}
 bool saveYoutubeSubscription(const std::string& url,size_t index){
@@ -559,7 +575,18 @@ media::PlaybackHistory playbackHistory;bool historyReadable=playbackHistory.load
 std::optional<media::PlaybackRecord> pendingHistoryResume;bool autoPlayEpisode=false;size_t historyLineStart=0,historyLinesTried=0;
 std::vector<media::SearchResult> favorites,homeRecommendations;
 std::vector<std::string> footballSources={"电视频道","咪咕精选赛事","咪咕中超"};
-std::vector<media::CctvChannel> cctvChannels=cctv.channels();bool cctvChannelFocus=false;std::string liveError;
+std::vector<media::CctvChannel> cctvChannels=cctv.channels();
+std::vector<std::string> liveFavorites=loadLiveFavorites();
+auto liveFavorite=[&](const std::string& id){return std::find(liveFavorites.begin(),liveFavorites.end(),id)!=liveFavorites.end();};
+auto sortLiveChannels=[&](){std::stable_sort(cctvChannels.begin(),cctvChannels.end(),[&](const auto& a,const auto& b){return liveFavorite(a.id)&&!liveFavorite(b.id);});};
+sortLiveChannels();
+auto toggleLiveFavorite=[&](const std::string& id){
+    auto updated=liveFavorites;auto it=std::find(updated.begin(),updated.end(),id);
+    const bool add=it==updated.end();if(add)updated.push_back(id);else updated.erase(it);
+    if(!saveLiveFavorites(updated)){status="频道收藏保存失败";return !add;}
+    liveFavorites=std::move(updated);return add;
+};
+bool cctvChannelFocus=false;std::string liveError;
 std::vector<media::FootballMatch> footballMatches;bool footballMatchFocus=false;size_t footballSourceSelected=0;
 std::vector<media::MiguMatch> miguMatches;std::vector<media::MiguClip> miguClips;bool miguMatchFocus=false,miguClipFocus=false;size_t miguMatchSelected=0;
 std::vector<media::MiguMatch> miguOverview,miguSchedule;
@@ -1415,6 +1442,14 @@ if(view==View::Browse&&categories[category].kind==8&&footballMatchFocus&&miguMat
     if(miguScheduleLoader.start())miguRefreshAt=SDL_GetTicks()+60000;
 }
 media::SourceConfigResult configuredSources;if(sourceConfigLoader.poll(configuredSources)){
+    if(configuredSources.livePlaylists){
+        const std::string keep=cctvChannelFocus&&selected<cctvChannels.size()?cctvChannels[selected].id:"";
+        cctvChannels=cctv.channels();
+        for(auto& channel:configuredSources.liveChannels)cctvChannels.push_back(std::move(channel));
+        sortLiveChannels();
+        if(!keep.empty()){auto it=std::find_if(cctvChannels.begin(),cctvChannels.end(),[&](const auto& channel){return channel.id==keep;});
+            if(it!=cctvChannels.end())selected=(size_t)(it-cctvChannels.begin());}
+    }
     if(configuredSources.succeeded)configuredSiteCount=configuredSources.totalSites;
     if(!configuredSources.footballSources.empty()){footballSources=std::move(configuredSources.footballSources);if(std::find(footballSources.begin(),footballSources.end(),"电视频道")==footballSources.end())footballSources.insert(footballSources.begin(),"电视频道");}
     footballSources.erase(std::remove_if(footballSources.begin(),footballSources.end(),[](const std::string& name){return name.find("飞球")!=std::string::npos;}),footballSources.end());
@@ -1636,7 +1671,15 @@ if(netReady&&(k&HidNpadButton_X)&&view!=View::SearchHome){if(view==View::Browse&
     else if(!youtube.signedIn())status="YouTube · 在 − 设置中使用配对码登录后可看订阅";
     else{youtubeNavSelected=2;youtubePage=YouTubePage::Subscriptions;youtube.cancel();youtube.subscriptions();youtubeLoading=true;browseItems.clear();selected=0;status="YouTube · 正在加载订阅频道...";}
     k=0;
-}else if(view==View::Browse&&categories[category].kind==8){if(!miguClipFocus&&!miguLiveFocus)status="体育 · 进入咪咕赛事列表后可按 X 扫码登录";}else if(view==View::Browse&&(categories[category].kind==4||categories[category].kind==5)){sortIndex=(sortIndex+1)%4;page=1;loadBrowse();}else{std::string u;if(keyboard(u,"Quark share link","Paste https://pan.quark.cn/s/..."))openShare(u);}}
+}else if(view==View::Browse&&categories[category].kind==8){
+    if(cctvChannelFocus&&selected<cctvChannels.size()){
+        const std::string keep=cctvChannels[selected].id;
+        const bool added=toggleLiveFavorite(keep);sortLiveChannels();
+        auto it=std::find_if(cctvChannels.begin(),cctvChannels.end(),[&](const auto& channel){return channel.id==keep;});
+        if(it!=cctvChannels.end())selected=(size_t)(it-cctvChannels.begin());
+        status=added?"已收藏频道 · 排在列表前面":"已取消频道收藏";k=0;
+    }else if(!miguClipFocus&&!miguLiveFocus)status="体育 · 进入咪咕赛事列表后可按 X 扫码登录";
+}else if(view==View::Browse&&(categories[category].kind==4||categories[category].kind==5)){sortIndex=(sortIndex+1)%4;page=1;loadBrowse();}else{std::string u;if(keyboard(u,"Quark share link","Paste https://pan.quark.cn/s/..."))openShare(u);}}
 if(view==View::Browse&&!youtubePlaying&&(k&HidNpadButton_L)){category=category?category-1:categories.size()-1;page=1;sortIndex=0;loadBrowse();}
 if(view==View::Browse&&!youtubePlaying&&(k&HidNpadButton_R)){category=(category+1)%categories.size();page=1;sortIndex=0;loadBrowse();}
 if(view==View::Browse&&categories[category].kind>0&&categories[category].kind<6&&(k&HidNpadButton_ZL)&&page>1){--page;loadBrowse();}
@@ -1791,15 +1834,33 @@ if((k&HidNpadButton_A)&&view==View::Browse&&categories[category].kind==8&&!footb
     if(cctvChannelFocus){liveName=cctvChannels[selected].name;status="正在获取 "+liveName+" 的直播地址...";}
     else{const auto match=footballMatches[selected];liveName=match.home+" VS "+match.away;status="正在获取 "+liveName+" 的直播地址...";}
     SDL_SetRenderDrawColor(r,18,24,38,255);SDL_RenderClear(r);text(r,f,"OKSwitch | "+status,40,22);SDL_RenderPresent(r);
-    stream=cctvChannelFocus?cctv.playback(cctvChannels[selected].id):football.playback(footballMatches[selected]);
+    stream=cctvChannelFocus?cctv.playback(cctvChannels[selected]):football.playback(footballMatches[selected]);
     if(!stream.succeeded){liveError=stream.error.message;status=liveName+" · "+liveError;}
     else{
         liveError.clear();
         auto showPlayerStatus=[&](const std::string& message){SDL_SetRenderDrawColor(r,8,13,22,255);SDL_RenderClear(r);text(r,f,message,30,24,1220,true);SDL_RenderPresent(r);};
-        media::PlaybackOptions options;options.measureText=[&](const std::string& value){return textWidth(f,value);};options.openSettings=openSettings;
-        options.liveQualityLabels={"当前线路固定画质"};
-        auto played=media::VideoPlayer::play(r,stream.value,options,showPlayerStatus,[&](const std::string& value,int x,int y,int width){text(r,f,value,x,y,width,true);});
-        status=played.error.empty()?"已退出足球直播":played.error;
+        while(true){
+            media::PlaybackOptions options;options.measureText=[&](const std::string& value){return textWidth(f,value);};options.openSettings=openSettings;
+            options.liveQualityLabels={"当前线路固定画质"};options.displayTitle=liveName;
+            if(cctvChannelFocus){
+                options.currentLiveChannelId=cctvChannels[selected].id;
+                options.toggleLiveFavorite=toggleLiveFavorite;
+                for(const auto& channel:cctvChannels)options.liveChannels.push_back({channel.id,channel.name,channel.group,liveFavorite(channel.id)});
+            }
+            auto played=media::VideoPlayer::play(r,stream.value,options,showPlayerStatus,[&](const std::string& value,int x,int y,int width){text(r,f,value,x,y,width,true);});
+            if(played.requestedLiveChannelId.empty()){
+                status=played.error.empty()?"已退出足球直播":played.error;break;
+            }
+            auto it=std::find_if(cctvChannels.begin(),cctvChannels.end(),[&](const auto& channel){return channel.id==played.requestedLiveChannelId;});
+            if(it==cctvChannels.end())break;
+            selected=(size_t)(it-cctvChannels.begin());liveName=it->name;
+            showPlayerStatus("正在切换到 "+liveName+"...");
+            stream=cctv.playback(*it);
+            if(!stream.succeeded){liveError=stream.error.message;status=liveName+" · "+liveError;break;}
+        }
+        if(cctvChannelFocus){const std::string keep=cctvChannels[selected].id;sortLiveChannels();
+            auto it=std::find_if(cctvChannels.begin(),cctvChannels.end(),[&](const auto& channel){return channel.id==keep;});
+            if(it!=cctvChannels.end())selected=(size_t)(it-cctvChannels.begin());}
     }
 }else if(!resourceLoading&&(k&HidNpadButton_A)&&view==View::Browse&&selected<browseItems.size()&&browseItems[selected].detailUrl=="okswitch:history"){
     rememberPage();view=View::History;selected=0;status="最近观看";
@@ -2058,7 +2119,17 @@ if(view==View::Browse&&categories[category].kind==9){
     for(size_t i=0;i<footballSources.size();++i){const size_t activeSource=footballMatchFocus?footballSourceSelected:selected;SDL_Rect row{35,155+(int)i*72,315,56};SDL_SetRenderDrawColor(r,i==activeSource?55:28,i==activeSource?180:46,i==activeSource?150:68,255);SDL_RenderFillRect(r,&row);text(r,f,sourceDisplayLabel(footballSources[i],true),row.x+20,row.y+18,row.w-40,true);}
     SDL_Rect panel{400,155,835,430};SDL_SetRenderDrawColor(r,23,34,50,255);SDL_RenderFillRect(r,&panel);
     if(!footballMatchFocus){text(r,f,"选择左侧线路并按 A 打开",445,220,730,true);text(r,f,"咪咕精选直播、中超回放与电视频道",445,290,730,true);}
-    else if(cctvChannelFocus){for(size_t i=0;i<cctvChannels.size();++i){SDL_Rect row{420,170+(int)i*70,795,56};SDL_SetRenderDrawColor(r,i==selected?55:31,i==selected?150:49,i==selected?125:66,255);SDL_RenderFillRect(r,&row);text(r,f,"◎ "+cctvChannels[i].name,row.x+18,row.y+16,650,true);text(r,f,"公共直播",row.x+665,row.y+16,110,true);}if(!liveError.empty())text(r,f,liveError,435,465,770,true);}
+    else if(cctvChannelFocus){
+        const size_t first=selected>6?selected-6:0;
+        for(size_t i=first;i<std::min(first+7,cctvChannels.size());++i){
+            SDL_Rect row{420,170+(int)(i-first)*58,795,50};
+            SDL_SetRenderDrawColor(r,i==selected?55:31,i==selected?150:49,i==selected?125:66,255);SDL_RenderFillRect(r,&row);
+            text(r,f,std::string(liveFavorite(cctvChannels[i].id)?"★ ":"")+cctvChannels[i].name,row.x+16,row.y+11,510,true);
+            text(r,f,cctvChannels[i].group,row.x+535,row.y+11,245,true);
+        }
+        text(r,f,std::to_string(cctvChannels.empty()?0:selected+1)+" / "+std::to_string(cctvChannels.size())+" · 播放时按 A 选频道，X 收藏",420,596,790,true);
+        if(!liveError.empty())text(r,f,liveError,435,628,770,true);
+    }
     else if(miguLiveFocus){
         if(miguLiveMatches.empty())text(r,f,"当前精选赛事没有直播或即将开始的足球比赛",435,220,770,true);
         const size_t matchFirst=selected>6?selected-6:0;

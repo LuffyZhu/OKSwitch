@@ -231,7 +231,8 @@ PlaybackResult VideoPlayer::play(
     };
     const bool directNetworkInput = source.segmentUrls.empty() && (source.url.rfind("rtmp://", 0) == 0
         || source.url.rfind("rtmps://", 0) == 0
-        || (source.url.rfind("http://", 0) == 0
+        || ((source.url.rfind("http://", 0) == 0
+                || source.url.rfind("https://", 0) == 0)
             && source.url.find(".m3u8") != std::string::npos));
     CurlVideoInput input(source, interrupt);
     std::unique_ptr<CurlVideoInput> separateAudioInput;
@@ -267,9 +268,11 @@ PlaybackResult VideoPlayer::play(
         std::atomic<int> horizontalDirection{0};
         std::atomic<bool> playbackReady{false};
         std::atomic<bool> qualityMenuOpen{false};
+        std::atomic<bool> liveMenuOpen{false};
         std::atomic<bool> settingsOpen{false};
         std::atomic<bool>* networkCancelled = nullptr;
         bool interruptNetworkReads=false;
+        bool liveMenuAvailable=false;
         int stickDirection=0;
         Uint64 stickRepeatAt=0;
         int buttonDirection=0;
@@ -277,6 +280,7 @@ PlaybackResult VideoPlayer::play(
     } controlPoll;
     controlPoll.networkCancelled = &networkCancelled;
     controlPoll.interruptNetworkReads = !directNetworkInput;
+    controlPoll.liveMenuAvailable = !options.liveChannels.empty();
     padInitializeDefault(&controlPoll.pad);
     SDL_Thread* controlThread = nullptr;
     LivePacketBuffer liveBuffer;
@@ -653,10 +657,13 @@ PlaybackResult VideoPlayer::play(
             // Direction presses are accumulated by the UI and committed as a
             // single seek. Interrupting AVIO for every press makes rapid seeks
             // visibly stall once per click.
+            const bool channelMenu=state.liveMenuOpen.load(std::memory_order_relaxed);
             const u64 interruptButtons = state.qualityMenuOpen.load(std::memory_order_relaxed)
-                ? HidNpadButton_Minus : HidNpadButton_A | HidNpadButton_B | HidNpadButton_Minus;
+                || channelMenu ? HidNpadButton_Minus
+                : state.liveMenuAvailable ? HidNpadButton_B | HidNpadButton_Minus
+                : HidNpadButton_A | HidNpadButton_B | HidNpadButton_Minus;
             if (playback && state.interruptNetworkReads
-                && ((down & interruptButtons)||horizontalStarted))
+                && ((down & interruptButtons)||(horizontalStarted&&!channelMenu)))
                 state.networkCancelled->store(true, std::memory_order_relaxed);
             SDL_Delay(8);
         }
@@ -673,6 +680,24 @@ PlaybackResult VideoPlayer::play(
     bool playbackReady = false;
     bool menuOpen = false;
     bool qualityMenuOpen = false;
+    bool liveMenuOpen = false;
+    bool liveMenuChannelsFocused = false;
+    size_t liveMenuGroup = 1, liveMenuChannel = 0;
+    std::vector<LiveChannelMenuItem> liveChannels = options.liveChannels;
+    std::vector<std::string> liveGroups = {"收藏", "全部频道"};
+    for(const auto& channel:liveChannels)
+        if(std::find(liveGroups.begin(),liveGroups.end(),channel.group)==liveGroups.end())
+            liveGroups.push_back(channel.group);
+    auto liveRows = [&](){
+        std::vector<size_t> rows;
+        for(size_t i=0;i<liveChannels.size();++i)
+            if(liveMenuGroup==1||(liveMenuGroup==0&&liveChannels[i].favorite)
+                ||(liveMenuGroup>=2&&liveChannels[i].group==liveGroups[liveMenuGroup]))rows.push_back(i);
+        std::stable_sort(rows.begin(),rows.end(),[&](size_t a,size_t b){
+            return liveChannels[a].favorite&&!liveChannels[b].favorite;
+        });
+        return rows;
+    };
     int qualityMenuIndex = std::clamp(options.currentQualityIndex,0,
         std::max(0,(int)options.liveQualityLabels.size()-1));
     bool progressFocused = false;
@@ -786,6 +811,42 @@ PlaybackResult VideoPlayer::play(
             }
             return;
         }
+        if(liveMenuOpen){
+            if(down&HidNpadButton_B){
+                if(liveMenuChannelsFocused)liveMenuChannelsFocused=false;
+                else{liveMenuOpen=false;controlPoll.liveMenuOpen.store(false,std::memory_order_relaxed);}
+                return;
+            }
+            if(!liveMenuChannelsFocused){
+                if((down&HidNpadButton_Up)&&liveMenuGroup>0)--liveMenuGroup;
+                if((down&HidNpadButton_Down)&&liveMenuGroup+1<liveGroups.size())++liveMenuGroup;
+                if(down&(HidNpadButton_A|HidNpadButton_Right)){
+                    liveMenuChannel=0;liveMenuChannelsFocused=true;
+                }
+                return;
+            }
+            auto rows=liveRows();
+            if((down&HidNpadButton_Up)&&liveMenuChannel>0)--liveMenuChannel;
+            if((down&HidNpadButton_Down)&&liveMenuChannel+1<rows.size())++liveMenuChannel;
+            if(down&HidNpadButton_Left){liveMenuChannelsFocused=false;return;}
+            if(liveMenuChannel>=rows.size())return;
+            auto& channel=liveChannels[rows[liveMenuChannel]];
+            if((down&HidNpadButton_X)&&options.toggleLiveFavorite){
+                channel.favorite=options.toggleLiveFavorite(channel.id);
+                auto reordered=liveRows();
+                const auto found=std::find_if(reordered.begin(),reordered.end(),[&](size_t i){return liveChannels[i].id==channel.id;});
+                liveMenuChannel=found==reordered.end()?0:(size_t)(found-reordered.begin());
+                return;
+            }
+            if(down&HidNpadButton_A){
+                if(channel.id==options.currentLiveChannelId){
+                    liveMenuOpen=false;controlPoll.liveMenuOpen.store(false,std::memory_order_relaxed);
+                }
+                else{result.requestedLiveChannelId=channel.id;
+                    networkCancelled.store(true,std::memory_order_relaxed);running=false;}
+            }
+            return;
+        }
         if(exitConfirm){
             seekHoldDirection=0;
             if(down&HidNpadButton_A){exitedByBack=true;running=false;}
@@ -871,6 +932,12 @@ PlaybackResult VideoPlayer::play(
         }
         if ((down & HidNpadButton_A)&&!seekPreview)
         {
+            if(!liveChannels.empty()){
+                liveMenuOpen=true;liveMenuChannelsFocused=false;
+                controlPoll.liveMenuOpen.store(true,std::memory_order_relaxed);
+                liveMenuGroup=1;liveMenuChannel=0;
+                return;
+            }
             menuOpen=true;progressFocused=false;menuSeekTarget=result.positionSeconds;menuIndex=0;menuIntroChanged=false;menuPreferencesChanged=false;
             menuStarted=SDL_GetTicks64();notice="已暂停";
             noticeUntil=SDL_GetTicks64()+1200;pauseAudio();
@@ -1008,6 +1075,32 @@ PlaybackResult VideoPlayer::play(
                 drawText(options.liveQualityLabels[i]+((int)i==options.currentQualityIndex?"  ✓":""),
                     row.x+15,row.y+10,row.w-30);
             }
+        }
+        if(liveMenuOpen){
+            SDL_Rect backdrop{0,0,std::min(outputWidth,800),outputHeight};
+            SDL_SetRenderDrawColor(renderer,8,13,22,235);SDL_RenderFillRect(renderer,&backdrop);
+            drawText("电视频道 · A 选择 · X 收藏 · B 返回",22,22,750);
+            const int listTop=82,rowHeight=50,visibleRows=11;
+            const size_t groupFirst=liveMenuGroup>=visibleRows?liveMenuGroup-visibleRows+1:0;
+            for(size_t i=groupFirst;i<std::min(liveGroups.size(),groupFirst+visibleRows);++i){
+                SDL_Rect row{16,listTop+(int)(i-groupFirst)*rowHeight,220,44};
+                SDL_SetRenderDrawColor(renderer,i==liveMenuGroup?(liveMenuChannelsFocused?45:50):25,
+                    i==liveMenuGroup?(liveMenuChannelsFocused?75:145):37, i==liveMenuGroup?105:52,245);
+                SDL_RenderFillRect(renderer,&row);drawText(liveGroups[i],row.x+10,row.y+8,row.w-20);
+            }
+            auto rows=liveRows();
+            const size_t channelFirst=liveMenuChannel>=visibleRows?liveMenuChannel-visibleRows+1:0;
+            for(size_t i=channelFirst;i<std::min(rows.size(),channelFirst+visibleRows);++i){
+                const auto& channel=liveChannels[rows[i]];
+                SDL_Rect row{252,listTop+(int)(i-channelFirst)*rowHeight,530,44};
+                SDL_SetRenderDrawColor(renderer,i==liveMenuChannel&&liveMenuChannelsFocused?50:25,
+                    i==liveMenuChannel&&liveMenuChannelsFocused?145:37,
+                    i==liveMenuChannel&&liveMenuChannelsFocused?105:52,245);
+                SDL_RenderFillRect(renderer,&row);
+                drawText(std::string(channel.favorite?"★ ":"")+channel.name
+                    +(channel.id==options.currentLiveChannelId?"  · 正在播放":""),row.x+10,row.y+8,row.w-20);
+            }
+            if(rows.empty())drawText("这个分类暂无频道",266,100,480);
         }
         if (menuOpen)
         {
@@ -1517,7 +1610,7 @@ PlaybackResult VideoPlayer::play(
             & HidNpadButton_B)) break;
         SDL_Delay(8);
     }
-    while (result.requestedQualityIndex>=0 && appletMainLoop())
+    while ((result.requestedQualityIndex>=0||!result.requestedLiveChannelId.empty()) && appletMainLoop())
     {
         if (!(controlPoll.held.load(std::memory_order_relaxed)
             & HidNpadButton_A)) break;

@@ -56,10 +56,34 @@ std::string absoluteUrl(const std::string& base, const std::string& path)
 
 std::vector<CctvChannel> CctvLiveProvider::channels() const
 {
-    return {{"cctv5", "CCTV-5 体育"},
-            {"cctv5plus", "CCTV-5+ 体育赛事"},
-            {"wuxing", "五星体育"},
-            {"cctv16", "CCTV-16 奥林匹克"}};
+    return {{"cctv5", "CCTV-5 体育", "央视体育"},
+            {"cctv5plus", "CCTV-5+ 体育赛事", "央视体育"},
+            {"cctv16", "CCTV-16 奥林匹克", "央视体育"}};
+}
+
+cloud::ProviderResult<cloud::PlaybackSource> CctvLiveProvider::playback(const CctvChannel& channel) const
+{
+    if(channel.urls.empty())return playback(channel.id);
+    cloud::ProviderResult<cloud::PlaybackSource> result;
+    for(const auto& url:channel.urls){
+        if(url.rfind("rtmp://",0)==0||url.rfind("rtmps://",0)==0){
+            result.value.url=url;result.value.headers=channel.headers;
+            result.succeeded=true;return result;
+        }
+        net::HttpRequest request;request.url=url;request.connectTimeoutSeconds=3;
+        request.timeoutSeconds=5;request.maxResponseBytes=64*1024;
+        for(const auto& header:channel.headers)request.headers.push_back({header.name,header.value});
+        const auto checked=httpClient_.get(request);
+        if(!checked.succeeded||checked.body.find("#EXTM3U")==std::string::npos)continue;
+        // Use the final URL for short-lived redirects; FFmpeg resolves live
+        // playlist segments relative to this URL.
+        result.value.url=checked.effectiveUrl.empty()?url:checked.effectiveUrl;
+        result.value.headers=channel.headers;
+        result.value.deinterlaceVideo=true;
+        result.succeeded=true;return result;
+    }
+    result.error={cloud::ProviderErrorCode::NetworkError,"频道线路暂时不可用"};
+    return result;
 }
 
 cloud::ProviderResult<cloud::PlaybackSource> CctvLiveProvider::playback(
@@ -89,8 +113,6 @@ cloud::ProviderResult<cloud::PlaybackSource> CctvLiveProvider::playback(
         "http://173.208.234.146/live/cctv5p.m3u8",
         "http://183.129.255.66:8480/hls/6/index.m3u8",
         "http://120.198.86.186:9901/tsfile/live/1025_1.m3u8?key=txiptv&playlive=1&authid=0"};
-    else if(channel=="wuxing") publicPlaylists={
-        "http://101.35.240.114:88/live.php?id=%E4%BA%94%E6%98%9F%E4%BD%93%E8%82%B2"};
     else if(channel=="cctv16") publicPlaylists={
         "http://173.208.234.146/live/cctv16.m3u8",
         "http://183.129.255.66:8480/hls/17/index.m3u8",
@@ -98,7 +120,7 @@ cloud::ProviderResult<cloud::PlaybackSource> CctvLiveProvider::playback(
     for(const auto& publicPlaylist:publicPlaylists){
         const bool androidRoute=publicPlaylist.find("101.35.240.114:88/")!=std::string::npos;
         net::HttpRequest health;health.url=publicPlaylist;health.connectTimeoutSeconds=3;health.timeoutSeconds=5;health.maxResponseBytes=64*1024;health.headers={{"User-Agent",androidRoute?"iPhone":kUserAgent}};
-        if(androidRoute)health.headers.push_back({"Referer",channel=="wuxing"?"https://live.kankanews.com/":"https:/aptv.app/"});
+        if(androidRoute)health.headers.push_back({"Referer","https:/aptv.app/"});
         const auto checked=httpClient_.get(health);
         if(!checked.succeeded||checked.body.find("#EXTM3U")==std::string::npos)continue;
         std::string resolved=checked.effectiveUrl.empty()?publicPlaylist:checked.effectiveUrl;

@@ -40,7 +40,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET		:=	$(notdir $(CURDIR))
 APP_TITLE	:=	OKSwitch
 APP_AUTHOR	:=	LuffyZhu
-APP_VERSION	:=	1.1.2
+APP_VERSION	:=	1.1.3
 ICON		:=	icon.jpg
 BUILD		:=	build
 SOURCES		:=	source source/net source/config source/cloud source/media source/ui source/wasm3
