@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 #include <functional>
@@ -57,6 +58,9 @@ struct PlaybackSource
     // A server-transcoded HLS playlist can be exposed as a seekable virtual
     // MPEG-TS stream when FFmpeg itself has no HTTPS protocol enabled.
     std::vector<std::string> segmentUrls;
+    // Optional AES-128 key and per-segment CBC IV for encrypted HLS media.
+    std::vector<unsigned char> segmentKey;
+    std::vector<std::array<unsigned char,16>> segmentIvs;
     // Regenerate short-lived signatures immediately before each HLS fetch.
     std::function<std::string(const std::string&)> refreshSegmentUrl;
     std::vector<std::uint64_t> segmentSizes;

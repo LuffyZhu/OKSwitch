@@ -113,8 +113,8 @@ constexpr Import kOldImports[] = {
     {"h", "i(iiii)", zero0}, {"i", "i()", domain}
 };
 constexpr Import kCurrentImports[] = {
-    {"d", "i()", fingerprint}, {"e", "i(iii)", indirect},
-    {"f", "i()", domain}, {"g", "i(iiii)", zero0},
+    {"d", "i()", domain}, {"e", "i(iii)", indirect},
+    {"f", "i()", fingerprint}, {"g", "i(iiii)", zero0},
     {"h", "i(iii)", zero0}, {"i", "i(iiii)", zero0}
 };
 
@@ -221,7 +221,7 @@ bool signMiguPlaylist(net::HttpClient& http, const std::string& url,
     // The site changed these six import signatures. Probe d before linking
     // the remaining imports so both module revisions remain usable.
     const bool currentImports = m3_LinkRawFunction(machine.module, "a", "d",
-        "i()", fingerprint) == m3Err_none;
+        "i()", domain) == m3Err_none;
     for (const auto& import : kCommonImports)
     {
         status = m3_LinkRawFunction(machine.module, "a", import.name,

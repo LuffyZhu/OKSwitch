@@ -31,6 +31,7 @@ extern "C" {
 #include "okswitch/cloud/BaiduPlaybackLoader.hpp"
 #include "okswitch/cloud/CloudLineLoader.hpp"
 #include "okswitch/media/MediaSource.hpp"
+#include "okswitch/media/Huangguo.hpp"
 #include "okswitch/media/CatalogLoader.hpp"
 #include "okswitch/media/DetailLoader.hpp"
 #include "okswitch/media/FootballProvider.hpp"
@@ -561,7 +562,7 @@ SDL_Texture* sparkleEmoji=romfsReady?bundledPng(r,"romfs:/images/emoji-1f387.png
 SDL_Texture* melonEmoji=romfsReady?bundledPng(r,"romfs:/images/emoji-1f349.png"):nullptr;
 bool netReady=R_SUCCEEDED(socketInitializeDefault());if(netReady){curl_global_init(CURL_GLOBAL_DEFAULT);avformat_network_init();}
 const bool dockedMode=appletGetOperationMode()==AppletOperationMode_Console;
-net::HttpClient http;ui::PosterCache posters(http,r);media::YouTubeProvider youtube(http,loadYoutubeProxy(),dockedMode?1080:720);media::MediaSource mediaSource(http);media::CatalogLoader catalogLoader(mediaSource),hotSearchLoader(mediaSource),suggestionLoader(mediaSource);media::DetailLoader detailLoader(mediaSource);media::SearchLoader searchLoader(mediaSource);media::SourceConfigLoader sourceConfigLoader(http);media::FootballProvider football(http);media::MiguSportsProvider migu(http);media::MiguScheduleLoader miguScheduleLoader(http);media::MiguClipsLoader miguClipsLoader(http);bool miguClipsLoading=false;media::MiguPlaybackLoader miguPlaybackLoader(migu);bool miguPlaybackLoading=false;media::MiguClip pendingMiguClip;media::MiguLogin miguLogin(http);migu.setSession(miguLogin.savedSession());media::CctvLiveProvider cctv(http);cloud::QuarkProvider quark(http);cloud::QuarkLogin quarkLogin(http);cloud::BaiduProvider baidu(http);cloud::BaiduLogin baiduLogin(http);cloud::CloudLineLoader cloudLineLoader(quark,baidu);cloud::BaiduPlaybackLoader baiduPlaybackLoader(quark,baidu);bool loginApplied=false,baiduLoginApplied=false,playerFullscreen=false,resourceLoading=false,searchPending=false,lineLoading=false,autoOpenFirstShare=false,autoTryingLines=false;size_t autoTryLine=0,loadingShareIndex=0,pendingLoginLine=SIZE_MAX;Uint32 autoOpenShareAt=0;cloud::LoginView loginView;cloud::BaiduLoginView baiduLoginView;CloudKind activeCloud=CloudKind::Quark,playbackCloud=CloudKind::Quark;cloud::PlaybackSource playbackSource;std::string playbackSourceFileId;std::vector<media::SourceDefinition> sources={{"剧透","https://1.star2.cn","AiNewJuTou","csp_AiNewJuTouGuard"},{"至臻","https://www.miqk.cc","NewZhiZhen","csp_NewZhiZhenGuard"},{"虎斑","http://43.248.128.118:16969","AiNewHuBan","csp_AiNewHuBanGuard"},{"秒播","https://sdapi.e2wu4ht.com","WexGuaZi","csp_WexGuaZiGuard"}};size_t configuredSiteCount=0;bool sourceConfigOnline=false;
+net::HttpClient http;ui::PosterCache posters(http,r);media::YouTubeProvider youtube(http,loadYoutubeProxy(),dockedMode?1080:720);media::MediaSource mediaSource(http,[&youtube]{return youtube.currentProxy();});media::CatalogLoader catalogLoader(mediaSource),hotSearchLoader(mediaSource),suggestionLoader(mediaSource);media::DetailLoader detailLoader(mediaSource);media::SearchLoader searchLoader(mediaSource);media::SourceConfigLoader sourceConfigLoader(http);media::FootballProvider football(http);media::MiguSportsProvider migu(http);media::MiguScheduleLoader miguScheduleLoader(http);media::MiguClipsLoader miguClipsLoader(http);bool miguClipsLoading=false;media::MiguPlaybackLoader miguPlaybackLoader(migu);bool miguPlaybackLoading=false;media::MiguClip pendingMiguClip;media::MiguLogin miguLogin(http);migu.setSession(miguLogin.savedSession());media::CctvLiveProvider cctv(http);cloud::QuarkProvider quark(http);cloud::QuarkLogin quarkLogin(http);cloud::BaiduProvider baidu(http);cloud::BaiduLogin baiduLogin(http);cloud::CloudLineLoader cloudLineLoader(quark,baidu);cloud::BaiduPlaybackLoader baiduPlaybackLoader(quark,baidu);bool loginApplied=false,baiduLoginApplied=false,playerFullscreen=false,resourceLoading=false,searchPending=false,lineLoading=false,autoOpenFirstShare=false,autoTryingLines=false;size_t autoTryLine=0,loadingShareIndex=0,pendingLoginLine=SIZE_MAX;Uint32 autoOpenShareAt=0;cloud::LoginView loginView;cloud::BaiduLoginView baiduLoginView;CloudKind activeCloud=CloudKind::Quark,playbackCloud=CloudKind::Quark;cloud::PlaybackSource playbackSource;std::string playbackSourceFileId;std::vector<media::SourceDefinition> sources={{"剧透","https://1.star2.cn","AiNewJuTou","csp_AiNewJuTouGuard"},{"至臻","https://www.miqk.cc","NewZhiZhen","csp_NewZhiZhenGuard"},{"虎斑","http://43.248.128.118:16969","AiNewHuBan","csp_AiNewHuBanGuard"},{"秒播","https://sdapi.e2wu4ht.com","WexGuaZi","csp_WexGuaZiGuard"}};size_t configuredSiteCount=0;bool sourceConfigOnline=false;
 net::TrojanSocksProxy youtubeTunnel;
 sources.push_back({"黄果短剧","https://huangguoai.com","HuangGuoNative","HuangGuoNative"});
 SubscriptionBoot subscriptionBoot;
@@ -1374,9 +1375,11 @@ if(view==View::Browse&&categories[category].kind==9){
                 if(youtubeResumeOverride>=0)options.resumeSeconds=youtubeResumeOverride;
                 auto played=media::VideoPlayer::play(r,result.stream,options,showPlayerStatus,
                     [&](const std::string& value,int x,int y,int width){text(r,f,value,x,y,width,true);});
-                if(!played.opened&&!result.fallbackStream.url.empty()&&played.error!="已取消加载"){
-                    showPlayerStatus("高清线路无法打开，正在尝试 "+std::to_string(result.fallbackHeight)+"p 备用线路 · B 取消");
+                if(!played.completed&&!played.error.empty()&&!result.fallbackStream.url.empty()
+                    &&played.error!="已取消加载"){
+                    showPlayerStatus("当前线路中断，正在尝试 "+std::to_string(result.fallbackHeight)+"p 备用线路 · B 取消");
                     options.displayTitle=youtubePendingTitle+" · "+std::to_string(result.fallbackHeight)+"p";
+                    if(played.opened)options.resumeSeconds=played.positionSeconds;
                     played=media::VideoPlayer::play(r,result.fallbackStream,options,showPlayerStatus,
                         [&](const std::string& value,int x,int y,int width){text(r,f,value,x,y,width,true);});
                 }
@@ -2225,7 +2228,7 @@ if(view==View::Browse&&categories[category].kind==9){
         if(!liveError.empty())text(r,f,liveError,435,590,770,true);
     }
     else if(footballMatches.empty())text(r,f,"当前没有可用足球赛事",445,220,730,true);
-    else{const size_t matchFirst=selected>6?selected-6:0;for(size_t i=matchFirst;i<std::min(matchFirst+7,footballMatches.size());++i){const auto& match=footballMatches[i];SDL_Rect row{420,170+(int)(i-matchFirst)*57,795,49};SDL_SetRenderDrawColor(r,i==selected?55:31,i==selected?150:49,i==selected?125:66,255);SDL_RenderFillRect(r,&row);const std::string prefix=match.liveStatus?"[直播] ":(match.time.empty()?"":match.time+"  ");text(r,f,prefix+match.home+" VS "+match.away,row.x+14,row.y+7,610,true);text(r,f,match.league,row.x+635,row.y+7,140,true);}}}}else{posters.beginFrame(2);first=(selected/12)*12;for(size_t i=first;i<std::min(first+12,browseItems.size());++i){int slot=(int)(i-first),col=slot%6,row=slot/6,x=35+col*205,y=105+row*265;SDL_Rect card{x,y,180,245};SDL_SetRenderDrawColor(r,i==selected?55:28,i==selected?180:46,i==selected?150:68,255);SDL_RenderFillRect(r,&card);SDL_Texture*p=posters.get(browseItems[i].posterUrl);SDL_Rect cover{x+4,y+4,172,190};if(browseItems[i].detailUrl=="okswitch:history"){text(r,f,"最近观看",x+35,y+85,130,true);text(r,f,std::to_string(historyCards().size())+" 部剧集",x+40,y+115,120,true);}else if(browseItems[i].detailUrl=="okswitch:favorites"){text(r,f,"收藏",x+55,y+80,120,true);text(r,f,std::to_string(favorites.size())+" 部剧集",x+40,y+120,130,true);}else if(p)SDL_RenderCopy(r,p,nullptr,&cover);else{SDL_SetRenderDrawColor(r,45,57,76,255);SDL_RenderFillRect(r,&cover);}text(r,f,browseItems[i].title,x+6,y+198,168,true);if(category==0&&isFavorite(browseItems[i].detailUrl)){SDL_Rect badge{x+4,y+4,62,24};SDL_SetRenderDrawColor(r,26,100,80,255);SDL_RenderFillRect(r,&badge);text(r,f,"收藏",x+10,y+6,50);}char meta[40]{};if(browseItems[i].rating>0)std::snprintf(meta,sizeof(meta),"评分 %.1f",browseItems[i].rating);if(meta[0])text(r,f,meta,x+6,y+221,168);}}}
+    else{const size_t matchFirst=selected>6?selected-6:0;for(size_t i=matchFirst;i<std::min(matchFirst+7,footballMatches.size());++i){const auto& match=footballMatches[i];SDL_Rect row{420,170+(int)(i-matchFirst)*57,795,49};SDL_SetRenderDrawColor(r,i==selected?55:31,i==selected?150:49,i==selected?125:66,255);SDL_RenderFillRect(r,&row);const std::string prefix=match.liveStatus?"[直播] ":(match.time.empty()?"":match.time+"  ");text(r,f,prefix+match.home+" VS "+match.away,row.x+14,row.y+7,610,true);text(r,f,match.league,row.x+635,row.y+7,140,true);}}}}else{posters.beginFrame(2);first=(selected/12)*12;for(size_t i=first;i<std::min(first+12,browseItems.size());++i){int slot=(int)(i-first),col=slot%6,row=slot/6,x=35+col*205,y=105+row*265;SDL_Rect card{x,y,180,245};SDL_SetRenderDrawColor(r,i==selected?55:28,i==selected?180:46,i==selected?150:68,255);SDL_RenderFillRect(r,&card);SDL_Texture*p=posters.get(browseItems[i].posterUrl,browseItems[i].sourceName=="黄果短剧"&&media::huangguo::usingProxy()?youtube.currentProxy():std::string{});SDL_Rect cover{x+4,y+4,172,190};if(browseItems[i].detailUrl=="okswitch:history"){text(r,f,"最近观看",x+35,y+85,130,true);text(r,f,std::to_string(historyCards().size())+" 部剧集",x+40,y+115,120,true);}else if(browseItems[i].detailUrl=="okswitch:favorites"){text(r,f,"收藏",x+55,y+80,120,true);text(r,f,std::to_string(favorites.size())+" 部剧集",x+40,y+120,130,true);}else if(p)SDL_RenderCopy(r,p,nullptr,&cover);else{SDL_SetRenderDrawColor(r,45,57,76,255);SDL_RenderFillRect(r,&cover);}text(r,f,browseItems[i].title,x+6,y+198,168,true);if(category==0&&isFavorite(browseItems[i].detailUrl)){SDL_Rect badge{x+4,y+4,62,24};SDL_SetRenderDrawColor(r,26,100,80,255);SDL_RenderFillRect(r,&badge);text(r,f,"收藏",x+10,y+6,50);}char meta[40]{};if(browseItems[i].rating>0)std::snprintf(meta,sizeof(meta),"评分 %.1f",browseItems[i].rating);if(meta[0])text(r,f,meta,x+6,y+221,168);}}}
 else if(view==View::SearchHome){
     text(r,f,youtubeSearchMode?"搜索 YouTube 视频 · ZR 可输入中文":"搜索影片与资源",30,62,730);SDL_Rect input{30,94,735,55};SDL_SetRenderDrawColor(r,31,63,82,255);SDL_RenderFillRect(r,&input);text(r,f,searchInput.empty()?"输入拼音或英文…":searchInput,50,111,690,true);
     const std::string rows[]={"1234567890","QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const int lengths[]={10,10,9,7};
@@ -2277,7 +2280,7 @@ else if(view==View::Search){
         const auto& item=searchItems[visibleSearch[i]];
         int slot=(int)(i-first),x=230+(slot%5)*203,y=110+(slot/5)*257;
         SDL_Rect card{x,y,188,245};SDL_SetRenderDrawColor(r,i==selected?55:28,i==selected?180:46,i==selected?150:68,255);SDL_RenderFillRect(r,&card);
-        SDL_Texture* image=posters.get(item.posterUrl);SDL_Rect cover{x+4,y+4,180,177};
+        SDL_Texture* image=posters.get(item.posterUrl,item.sourceName=="黄果短剧"&&media::huangguo::usingProxy()?youtube.currentProxy():std::string{});SDL_Rect cover{x+4,y+4,180,177};
         if(image)SDL_RenderCopy(r,image,nullptr,&cover);
         else{text(r,f,"海报加载中",x+18,y+90,152,true);}
         SDL_Rect badge{x+4,y+4,180,25};SDL_SetRenderDrawColor(r,26,65,62,255);SDL_RenderFillRect(r,&badge);
@@ -2316,7 +2319,7 @@ else if(view==View::History||view==View::Favorites){
             const int slot=(int)(i-first),x=35+(slot%6)*205,y=105+(slot/6)*265;
             SDL_Rect card{x,y,180,245};SDL_SetRenderDrawColor(r,i==selected?55:28,i==selected?180:46,i==selected?150:68,255);SDL_RenderFillRect(r,&card);
             SDL_Rect cover{x+4,y+4,172,190};
-            if(auto* poster=posters.get(item.posterUrl))SDL_RenderCopy(r,poster,nullptr,&cover);
+            if(auto* poster=posters.get(item.posterUrl,item.sourceName=="黄果短剧"&&media::huangguo::usingProxy()?youtube.currentProxy():std::string{}))SDL_RenderCopy(r,poster,nullptr,&cover);
             else{SDL_SetRenderDrawColor(r,45,57,76,255);SDL_RenderFillRect(r,&cover);text(r,f,"暂无海报",x+40,y+85,100,true);}
             text(r,f,item.title,x+6,y+198,168,true);
             const std::string meta=watching?item.sourceName+" · "+episodeLabel(record->fileName,(size_t)std::max(0,record->episodeOrdinal)):item.sourceName;
@@ -2330,7 +2333,7 @@ else{
     if(lineLoading){SDL_SetRenderDrawColor(r,8,13,22,255);SDL_Rect loadingPanel{30,75,430,225};SDL_RenderFillRect(r,&loadingPanel);text(r,f,"正在切换并加载线路...",50,260,390,true);}
     else if(detailItem.detailUrl.rfind("okswitch:huangguo:",0)==0){
         SDL_SetRenderDrawColor(r,8,13,22,255);SDL_Rect coverPanel{30,75,430,225};SDL_RenderFillRect(r,&coverPanel);
-        if(auto* cover=posters.get(detail.posterUrl)){SDL_Rect destination{150,84,172,190};SDL_RenderCopy(r,cover,nullptr,&destination);}
+        if(auto* cover=posters.get(detail.posterUrl,detailItem.detailUrl.rfind("okswitch:huangguo:",0)==0&&media::huangguo::usingProxy()?youtube.currentProxy():std::string{})){SDL_Rect destination{150,84,172,190};SDL_RenderCopy(r,cover,nullptr,&destination);}
         else text(r,f,"黄果短剧 · 剧集列表",95,170,320,true);
     }else drawLogin({30,75,430,225},false);
     text(r,f,detail.title.empty()?"夸克分享":detail.title,485,80,740,true);

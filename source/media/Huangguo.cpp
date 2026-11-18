@@ -1,8 +1,10 @@
 #include "okswitch/media/Huangguo.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
+#include <sstream>
 #include <jansson.h>
 #include <curl/curl.h>
 
@@ -10,6 +12,8 @@ namespace okswitch::media::huangguo {
 namespace {
 constexpr const char* site="https://huangguoai.com";
 constexpr const char* agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+// 0: not tested, 1: direct works, 2: direct failed and proxy works.
+std::atomic<int> route{0};
 
 bool numeric(const std::string& value){
     return !value.empty()&&value.size()<20&&std::all_of(value.begin(),value.end(),
@@ -40,13 +44,65 @@ std::string absolute(const std::string& url){
     if(!url.empty()&&url[0]=='/')return std::string(site)+url;
     return {};
 }
+std::string relativeTo(const std::string& base,const std::string& value){
+    if(value.rfind("https://",0)==0||value.rfind("http://",0)==0)return value;
+    const auto scheme=base.find("://");if(scheme==std::string::npos)return {};
+    const auto hostEnd=base.find('/',scheme+3);
+    const std::string origin=base.substr(0,hostEnd);
+    if(value.rfind("//",0)==0)return base.substr(0,scheme)+":"+value;
+    if(!value.empty()&&value[0]=='/')return origin+value;
+    const auto pathEnd=base.find('?');
+    const auto slash=base.rfind('/',pathEnd);
+    return slash==std::string::npos?std::string():base.substr(0,slash+1)+value;
+}
+bool parseHls(const std::string& manifest,const std::string& url,
+    cloud::PlaybackSource& stream,std::string& keyUrl){
+    std::istringstream lines(manifest);std::string line;
+    double duration=0;uint64_t sequence=0;std::string activeKey;
+    std::array<unsigned char,16> explicitIv{};bool hasExplicitIv=false;
+    while(std::getline(lines,line)){
+        if(!line.empty()&&line.back()=='\r')line.pop_back();
+        if(line.rfind("#EXT-X-MEDIA-SEQUENCE:",0)==0)
+            sequence=std::strtoull(line.c_str()+22,nullptr,10);
+        else if(line.rfind("#EXT-X-KEY:",0)==0){
+            if(line.find("METHOD=AES-128")==std::string::npos)return false;
+            activeKey=relativeTo(url,attribute(line.c_str(),"URI"));
+            if(activeKey.empty()||(!keyUrl.empty()&&keyUrl!=activeKey))return false;
+            keyUrl=activeKey;hasExplicitIv=false;
+            const auto ivAt=line.find("IV=0x");
+            if(ivAt!=std::string::npos){
+                const auto hex=line.substr(ivAt+5,32);
+                if(hex.size()!=32)return false;
+                for(size_t i=0;i<16;++i){
+                    const char pair[3]{hex[i*2],hex[i*2+1],0};
+                    char* end=nullptr;explicitIv[i]=(unsigned char)std::strtoul(pair,&end,16);
+                    if(end!=pair+2)return false;
+                }
+                hasExplicitIv=true;
+            }
+        }else if(line.rfind("#EXTINF:",0)==0)
+            duration=std::strtod(line.c_str()+8,nullptr);
+        else if(!line.empty()&&line[0]!='#'&&duration>0&&stream.segmentUrls.size()<500){
+            const auto segmentUrl=relativeTo(url,line);if(segmentUrl.empty())return false;
+            stream.segmentUrls.push_back(segmentUrl);
+            stream.segmentSizes.push_back(0);
+            stream.segmentDurations.push_back(duration);
+            std::array<unsigned char,16> iv=explicitIv;
+            if(!hasExplicitIv){const uint64_t number=sequence+stream.segmentUrls.size()-1;
+                for(int i=0;i<8;++i)iv[15-i]=(unsigned char)(number>>(i*8));}
+            stream.segmentIvs.push_back(iv);
+            duration=0;
+        }
+    }
+    return !stream.segmentUrls.empty();
+}
 std::string encoded(const std::string& value){
     CURL* curl=curl_easy_init();if(!curl)return {};
     char* raw=curl_easy_escape(curl,value.c_str(),(int)value.size());
     std::string result=raw?raw:"";if(raw)curl_free(raw);curl_easy_cleanup(curl);return result;
 }
 net::HttpResponse page(net::HttpClient& http,const std::string& url,
-    const std::atomic<bool>* cancel,bool post=false){
+    const std::atomic<bool>* cancel,const std::string& proxyUrl,bool post=false){
     net::HttpRequest request;request.url=url;request.cancel=cancel;
     request.connectTimeoutSeconds=5;request.timeoutSeconds=15;
     request.maxResponseBytes=2*1024*1024;request.closeConnection=true;
@@ -54,7 +110,29 @@ net::HttpResponse page(net::HttpClient& http,const std::string& url,
         {"Accept",post?"application/json":"text/html,application/xhtml+xml"}};
     if(post){request.method="POST";request.body="{}";
         request.headers.push_back({"Content-Type","application/json"});}
-    return http.get(request);
+    if(!proxyUrl.empty()&&route.load()==2){
+        request.proxyUrl=proxyUrl;
+        request.connectTimeoutSeconds=8;request.timeoutSeconds=20;
+        auto response=http.get(request);
+        if(response.succeeded)return response;
+        if(cancel&&cancel->load())return response;
+        request.proxyUrl.clear();
+        auto direct=http.get(request);
+        if(direct.succeeded)route.store(1);
+        if(direct.succeeded)return direct;
+        response.error="代理失败："+response.error+"；直连重试："+direct.error;
+        return response;
+    }
+    auto response=http.get(request);
+    if(response.succeeded){route.store(1);return response;}
+    if(proxyUrl.empty()||(cancel&&cancel->load()))return response;
+    request.proxyUrl=proxyUrl;
+    request.connectTimeoutSeconds=8;request.timeoutSeconds=20;
+    auto fallback=http.get(request);
+    if(fallback.succeeded)route.store(2);
+    if(fallback.succeeded)return fallback;
+    response.error="直连失败："+response.error+"；代理重试："+fallback.error;
+    return response;
 }
 std::string digitsAfter(const std::string& text,const std::string& prefix){
     const auto at=text.find(prefix);if(at==std::string::npos)return {};
@@ -62,6 +140,7 @@ std::string digitsAfter(const std::string& text,const std::string& prefix){
     while(end<text.size()&&std::isdigit((unsigned char)text[end]))++end;
     return end==start?std::string():text.substr(start,end-start);
 }
+
 std::string firstImage(const std::string& html){
     const auto at=html.find("data-src=\"");if(at==std::string::npos)return {};
     const auto end=html.find('>',at);if(end==std::string::npos)return {};
@@ -109,8 +188,10 @@ std::string jsonText(json_t* object,const char* key){
 }
 }
 
+bool usingProxy(){return route.load()==2;}
+
 SearchResponse catalog(net::HttpClient& http,const std::string& section,int pageNumber,
-    const std::atomic<bool>* cancel){
+    const std::atomic<bool>* cancel,const std::string& proxyUrl){
     SearchResponse result;
     const std::string allowed[]={"home","ai-duanju","ai-manju","ai-huanlian","ai-mogai","ranks/hot"};
     if(std::find(std::begin(allowed),std::end(allowed),section)==std::end(allowed)){
@@ -119,7 +200,7 @@ SearchResponse catalog(net::HttpClient& http,const std::string& section,int page
     const int pageIndex=std::clamp(pageNumber,1,100);
     const std::string url=std::string(site)+(section=="home"?"/":"/"+section+"/")
         +(pageIndex>1?std::to_string(pageIndex)+"/":"");
-    const auto response=page(http,url,cancel);
+    const auto response=page(http,url,cancel,proxyUrl);
     if(!response.succeeded){result.error=response.error;return result;}
     result.items=cards(response.body);
     result.total=(int)result.items.size();result.succeeded=!result.items.empty();
@@ -128,18 +209,18 @@ SearchResponse catalog(net::HttpClient& http,const std::string& section,int page
 }
 
 SearchResponse search(net::HttpClient& http,const std::string& keyword,
-    const std::atomic<bool>* cancel){
+    const std::atomic<bool>* cancel,const std::string& proxyUrl){
     SearchResponse result;if(keyword.empty())return result;
-    const auto response=page(http,std::string(site)+"/search/video/"+encoded(keyword)+"/",cancel);
+    const auto response=page(http,std::string(site)+"/search/video/"+encoded(keyword)+"/",cancel,proxyUrl);
     if(!response.succeeded){result.error=response.error;return result;}
     result.items=cards(response.body);result.total=(int)result.items.size();result.succeeded=true;
     return result;
 }
 
 DetailResponse detail(net::HttpClient& http,const std::string& id,
-    const std::atomic<bool>* cancel){
+    const std::atomic<bool>* cancel,const std::string& proxyUrl){
     DetailResponse result;if(!numeric(id)){result.error="无效的短剧编号";return result;}
-    const auto response=page(http,std::string(site)+"/video/"+id+"/",cancel);
+    const auto response=page(http,std::string(site)+"/video/"+id+"/",cancel,proxyUrl);
     if(!response.succeeded){result.error=response.error;return result;}
     json_t* data=initialData(response.body);
     const auto h1=response.body.find("<h1");
@@ -162,13 +243,13 @@ DetailResponse detail(net::HttpClient& http,const std::string& id,
 }
 
 cloud::ProviderResult<cloud::PlaybackSource> playback(net::HttpClient& http,
-    const std::string& opaque,const std::atomic<bool>* cancel){
+    const std::string& opaque,const std::atomic<bool>* cancel,const std::string& proxyUrl){
     cloud::ProviderResult<cloud::PlaybackSource> result;
     const auto slash=opaque.find('/');
     const auto id=opaque.substr(0,slash);
     const auto ep=slash==std::string::npos?"1":opaque.substr(slash+1);
     if(!numeric(id)||!numeric(ep)){result.error={cloud::ProviderErrorCode::InvalidResponse,"无效的剧集编号"};return result;}
-    const auto response=page(http,std::string(site)+"/api/videos/"+id+"/episodes/"+ep+"/playback",cancel,true);
+    const auto response=page(http,std::string(site)+"/api/videos/"+id+"/episodes/"+ep+"/playback",cancel,proxyUrl,true);
     if(!response.succeeded){result.error={cloud::ProviderErrorCode::NetworkError,response.error};return result;}
     json_error_t error{};json_t* root=json_loadb(response.body.data(),response.body.size(),0,&error);
     json_t* data=json_object_get(root,"data");json_t* streams=json_object_get(data,"streams");
@@ -178,12 +259,42 @@ cloud::ProviderResult<cloud::PlaybackSource> playback(net::HttpClient& http,
         result.error={cloud::ProviderErrorCode::InvalidResponse,"短剧播放接口没有返回视频地址"};return result;
     }
     result.value.url=url;
+    if(usingProxy())result.value.proxyUrl=proxyUrl;
     result.value.headers={{"User-Agent",agent},{"Referer",std::string(site)+"/"}};
     json_t* cdn=json_object_get(data,"cdn");
     const std::string authKey=jsonText(cdn,"authKey"),authValue=jsonText(cdn,"authValue"),app=jsonText(cdn,"app");
     if(!authKey.empty()&&!authValue.empty())result.value.headers.push_back({authKey,authValue});
     if(!app.empty())result.value.headers.push_back({"x-cdn-app",app});
     result.value.parallelFetches=2;result.value.initialBufferSegments=2;
+    if(usingProxy()&&url.find(".m3u8")!=std::string::npos){
+        net::HttpRequest manifest;manifest.url=url;manifest.proxyUrl=proxyUrl;
+        manifest.cancel=cancel;manifest.connectTimeoutSeconds=8;manifest.timeoutSeconds=20;
+        manifest.maxResponseBytes=2*1024*1024;
+        for(const auto& header:result.value.headers)
+            manifest.headers.push_back({header.name,header.value});
+        const auto playlist=http.get(manifest);
+        if(!playlist.succeeded){
+            result.error={cloud::ProviderErrorCode::NetworkError,"短剧视频清单读取失败："+playlist.error};
+            if(root)json_decref(root);return result;
+        }
+        std::string keyUrl;
+        if(!parseHls(playlist.body,url,result.value,keyUrl)){
+            result.error={cloud::ProviderErrorCode::InvalidResponse,"短剧视频清单格式暂不支持"};
+            if(root)json_decref(root);return result;
+        }
+        if(!keyUrl.empty()){
+            net::HttpRequest key;key.url=keyUrl;key.proxyUrl=proxyUrl;key.cancel=cancel;
+            key.connectTimeoutSeconds=8;key.timeoutSeconds=20;key.maxResponseBytes=32;
+            for(const auto& header:result.value.headers)
+                key.headers.push_back({header.name,header.value});
+            const auto response=http.get(key);
+            if(!response.succeeded||response.body.size()!=16){
+                result.error={cloud::ProviderErrorCode::NetworkError,"短剧视频密钥读取失败："+response.error};
+                if(root)json_decref(root);return result;
+            }
+            result.value.segmentKey.assign(response.body.begin(),response.body.end());
+        }
+    }
     result.succeeded=true;if(root)json_decref(root);return result;
 }
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include "okswitch/cloud/CloudDriveProvider.hpp"
 #include <curl/curl.h>
+#include <mbedtls/aes.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -30,7 +31,8 @@ class CurlVideoInput {
     static constexpr size_t segmentReadAhead = 5;
     static constexpr int64_t variableSegmentSlot = 32LL * 1024 * 1024;
     struct Block { int64_t begin = -1; std::vector<unsigned char> data; uint64_t used = 0; };
-    struct Segment { std::string url; int64_t begin = 0, size = 0; double startSeconds = 0, durationSeconds = 0; };
+    struct Segment { std::string url; int64_t begin = 0, size = 0; double startSeconds = 0, durationSeconds = 0;
+        std::array<unsigned char,16> iv{}; };
     struct SegmentDownload {
         int64_t begin = -1;
         std::vector<unsigned char> data;
@@ -424,6 +426,25 @@ class CurlVideoInput {
                 result.error = "HTTP " + std::to_string(transfer.status);
         }
         result.succeeded = expected ? result.data.size() == expected : variableComplete;
+        if(result.succeeded&&s.rangeSource_.segmentKey.size()==16){
+            if(result.data.empty()||result.data.size()%16!=0){
+                result.succeeded=false;result.error="加密视频分片长度无效";
+            }else{
+                mbedtls_aes_context aes;mbedtls_aes_init(&aes);
+                auto iv=segment.iv;
+                const int keyResult=mbedtls_aes_setkey_dec(&aes,s.rangeSource_.segmentKey.data(),128);
+                const int cryptResult=keyResult==0?mbedtls_aes_crypt_cbc(&aes,MBEDTLS_AES_DECRYPT,
+                    result.data.size(),iv.data(),result.data.data(),result.data.data()):-1;
+                mbedtls_aes_free(&aes);
+                if(cryptResult!=0){result.succeeded=false;result.error="加密视频分片解密失败";}
+                else{const unsigned char padding=result.data.back();
+                    if(padding>0&&padding<=16&&padding<=result.data.size()
+                        &&std::all_of(result.data.end()-padding,result.data.end(),
+                            [padding](unsigned char value){return value==padding;}))
+                        result.data.resize(result.data.size()-padding);
+                }
+            }
+        }
         if (!result.succeeded)
             result.error += " / received " + std::to_string(result.data.size())
                 + (expected ? " of " + std::to_string(expected) : std::string()) + " bytes";
@@ -681,7 +702,8 @@ public:
                     segments_.clear(); break;
                 }
                 segments_.push_back({source.segmentUrls[i], begin,
-                    static_cast<int64_t>(bytes), startSeconds, seconds});
+                    static_cast<int64_t>(bytes), startSeconds, seconds,
+                    i<source.segmentIvs.size()?source.segmentIvs[i]:std::array<unsigned char,16>{}});
                 begin += static_cast<int64_t>(bytes);startSeconds += seconds;
             }
             segmented_ = !segments_.empty() && segments_.size() == source.segmentUrls.size();

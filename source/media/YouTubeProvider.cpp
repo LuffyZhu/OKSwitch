@@ -801,7 +801,17 @@ YouTubeResult YouTubeProvider::playbackNow(const std::string& videoId){
         }
     }
     int selectedHeight=progressiveHeight;
-    if(!videoUrl.empty()&&!audioUrl.empty()&&videoHeight>progressiveHeight){
+    const bool stableProgressive=!result.stream.url.empty()
+        &&result.stream.url.find("ratebypass=yes")!=std::string::npos;
+    if(stableProgressive){
+        // A single rate-unlimited stream opens faster and avoids the Android
+        // adaptive stream's later 403 after its initial transfer burst.
+        if(!videoUrl.empty()&&!audioUrl.empty()&&videoHeight>progressiveHeight){
+            result.fallbackStream.url=videoUrl;
+            result.fallbackStream.audioUrl=audioUrl;
+            result.fallbackHeight=videoHeight;
+        }
+    }else if(!videoUrl.empty()&&!audioUrl.empty()&&videoHeight>progressiveHeight){
         if(!result.stream.url.empty()){
             result.fallbackStream.url=result.stream.url;
             result.fallbackHeight=progressiveHeight;

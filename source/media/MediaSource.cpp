@@ -273,7 +273,9 @@ std::vector<SearchResult> parsePanMiSearchHtml(
 }
 }
 
-MediaSource::MediaSource(net::HttpClient& httpClient) : httpClient_(httpClient) {}
+MediaSource::MediaSource(net::HttpClient& httpClient,
+    std::function<std::string()> dramaProxy)
+    : httpClient_(httpClient), dramaProxy_(std::move(dramaProxy)) {}
 
 SearchResponse MediaSource::browse(const SourceDefinition& source, const std::string& path) const
 {
@@ -300,7 +302,8 @@ SearchResponse MediaSource::catalog(const std::string& endpoint, const std::atom
         const auto separator=route.rfind(':');
         const std::string section=separator==std::string::npos?route:route.substr(0,separator);
         const int page=separator==std::string::npos?1:std::max(1,std::atoi(route.c_str()+separator+1));
-        return huangguo::catalog(httpClient_,section,page,cancel);
+        return huangguo::catalog(httpClient_,section,page,cancel,
+            dramaProxy_?dramaProxy_():std::string{});
     }
     SearchResponse result;
     net::HttpRequest request;
@@ -403,7 +406,8 @@ SearchResponse MediaSource::search(const SourceDefinition& source, const std::st
                                    const std::atomic<bool>* cancel) const
 {
     if(source.api.find("HuangGuo")!=std::string::npos)
-        return huangguo::search(httpClient_,keyword,cancel);
+        return huangguo::search(httpClient_,keyword,cancel,
+            dramaProxy_?dramaProxy_():std::string{});
     if(source.api.find("YueYue")!=std::string::npos){
         auto response=yueyue::search(httpClient_,keyword,cancel);
         for(auto& item:response.items)item.sourceName=source.name;
@@ -484,7 +488,8 @@ DetailResponse MediaSource::detail(const std::string& url,
 {
     constexpr const char* dramaPrefix="okswitch:huangguo:";
     if(url.rfind(dramaPrefix,0)==0)
-        return huangguo::detail(httpClient_,url.substr(std::strlen(dramaPrefix)),cancel);
+        return huangguo::detail(httpClient_,url.substr(std::strlen(dramaPrefix)),cancel,
+            dramaProxy_?dramaProxy_():std::string{});
     constexpr const char* yueyuePrefix="okswitch:yueyue:";
     if(url.rfind(yueyuePrefix,0)==0)
         return yueyue::detail(httpClient_,url.substr(std::strlen(yueyuePrefix)),cancel);
@@ -698,7 +703,8 @@ cloud::ProviderResult<cloud::PlaybackSource> MediaSource::guaziPlayback(
 {
     constexpr const char* dramaPrefix="huangguo:";
     if(opaque.rfind(dramaPrefix,0)==0)
-        return huangguo::playback(httpClient_,opaque.substr(std::strlen(dramaPrefix)),cancel);
+        return huangguo::playback(httpClient_,opaque.substr(std::strlen(dramaPrefix)),cancel,
+            dramaProxy_?dramaProxy_():std::string{});
     constexpr const char* yueyuePrefix="yueyue:";
     if(opaque.rfind(yueyuePrefix,0)==0)
         return yueyue::playback(httpClient_,opaque.substr(std::strlen(yueyuePrefix)),cancel);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -74,7 +75,8 @@ struct SourceDefinition
 class MediaSource
 {
 public:
-    explicit MediaSource(net::HttpClient& httpClient);
+    explicit MediaSource(net::HttpClient& httpClient,
+        std::function<std::string()> dramaProxy = {});
     SearchResponse browse(const SourceDefinition& source, const std::string& path) const;
     SearchResponse catalog(const std::string& endpoint, const std::atomic<bool>* cancel = nullptr) const;
     SearchResponse search(const SourceDefinition& source, const std::string& keyword,
@@ -96,5 +98,6 @@ public:
 
 private:
     net::HttpClient& httpClient_;
+    std::function<std::string()> dramaProxy_;
 };
 }
