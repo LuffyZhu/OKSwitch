@@ -270,6 +270,7 @@ SourceConfigResult SourceConfigLoader::load(const std::string& url){
     addPinned("二小 | 4K","csp_NewErXiaoGuard","ErXiao","erxiao","https://www.2xiaopan.top");
     addPinned("秒播 | 1080P","csp_WexGuaZiGuard","WexGuaZi","guazi","https://sdapi.e2wu4ht.com");
     addPinned("▶ 闪电┃秒播","csp_WexAiYueYueGuard","YueYue","yueyue","https://u.yyxdmn.com");
+    addPinned("黄果短剧","HuangGuoNative","HuangGuo","huangguo","https://huangguoai.com");
 
     // Keep the two newly integrated providers directly behind JuTou so their
     // results arrive early during the stable sequential online search.

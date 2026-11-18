@@ -715,7 +715,7 @@ PlaybackResult VideoPlayer::play(
     Uint64 seekHoldStarted = 0;
     double seekHoldApplied = 0;
     // Integrate elapsed hold time rather than adding one jump per repeat event.
-    // After a short tap window, ramp from 60 to 180 media seconds per second.
+    // Short taps move five seconds; a sustained press accelerates for long videos.
     auto adjustSeekTarget = [&](double& target, u64 presses, int direction) {
         const Uint64 now = SDL_GetTicks64();
         if (presses || direction != seekHoldDirection) {
@@ -723,13 +723,13 @@ PlaybackResult VideoPlayer::play(
             seekHoldStarted = now;
             seekHoldApplied = 0;
             if (presses || direction)
-                target += (direction ? direction : (presses & HidNpadButton_Right ? 1 : -1)) * 10.0;
+                target += (direction ? direction : (presses & HidNpadButton_Right ? 1 : -1)) * 5.0;
         }
         if (direction) {
             const double seconds = std::max(0.0, (now - seekHoldStarted) / 1000.0 - 0.30);
             const double ramp = std::min(seconds, 3.0);
-            const double distance = 60.0 * ramp + 20.0 * ramp * ramp
-                + 180.0 * std::max(0.0, seconds - 3.0);
+            const double distance = 30.0 * ramp + 30.0 * ramp * ramp
+                + 300.0 * std::max(0.0, seconds - 3.0);
             target += direction * (distance - seekHoldApplied);
             seekHoldApplied = distance;
         }
@@ -802,8 +802,8 @@ PlaybackResult VideoPlayer::play(
             return;
         }
         if(qualityMenuOpen){
-            if((down&HidNpadButton_Up)&&qualityMenuIndex>0)--qualityMenuIndex;
-            if((down&HidNpadButton_Down)&&qualityMenuIndex+1<(int)options.liveQualityLabels.size())++qualityMenuIndex;
+            if(down&HidNpadButton_Up)qualityMenuIndex=qualityMenuIndex?qualityMenuIndex-1:(int)options.liveQualityLabels.size()-1;
+            if(down&HidNpadButton_Down)qualityMenuIndex=(qualityMenuIndex+1)%options.liveQualityLabels.size();
             if(down&HidNpadButton_B){qualityMenuOpen=false;controlPoll.qualityMenuOpen.store(false,std::memory_order_relaxed);}
             if(down&HidNpadButton_A){
                 qualityMenuOpen=false;controlPoll.qualityMenuOpen.store(false,std::memory_order_relaxed);
@@ -818,16 +818,18 @@ PlaybackResult VideoPlayer::play(
                 return;
             }
             if(!liveMenuChannelsFocused){
-                if((down&HidNpadButton_Up)&&liveMenuGroup>0)--liveMenuGroup;
-                if((down&HidNpadButton_Down)&&liveMenuGroup+1<liveGroups.size())++liveMenuGroup;
+                if(down&HidNpadButton_Up)liveMenuGroup=liveMenuGroup?liveMenuGroup-1:liveGroups.size()-1;
+                if(down&HidNpadButton_Down)liveMenuGroup=(liveMenuGroup+1)%liveGroups.size();
                 if(down&(HidNpadButton_A|HidNpadButton_Right)){
                     liveMenuChannel=0;liveMenuChannelsFocused=true;
                 }
                 return;
             }
             auto rows=liveRows();
-            if((down&HidNpadButton_Up)&&liveMenuChannel>0)--liveMenuChannel;
-            if((down&HidNpadButton_Down)&&liveMenuChannel+1<rows.size())++liveMenuChannel;
+            if(!rows.empty()){
+                if(down&HidNpadButton_Up)liveMenuChannel=liveMenuChannel?liveMenuChannel-1:rows.size()-1;
+                if(down&HidNpadButton_Down)liveMenuChannel=(liveMenuChannel+1)%rows.size();
+            }
             if(down&HidNpadButton_Left){liveMenuChannelsFocused=false;return;}
             if(liveMenuChannel>=rows.size())return;
             auto& channel=liveChannels[rows[liveMenuChannel]];

@@ -127,6 +127,13 @@ bool loadAutoPlayNext(){
     if(root)json_decref(root);
     return enabled;
 }
+bool loadShowHuangguo(){
+    json_error_t error{};auto* root=json_load_file(settingsPath,0,&error);
+    auto* value=json_object_get(root,"showHuangguo");
+    const bool enabled=json_is_boolean(value)&&json_boolean_value(value);
+    if(root)json_decref(root);
+    return enabled;
+}
 std::string loadYoutubeProxy(){
     json_error_t error{};auto* root=json_load_file(settingsPath,0,&error);
     auto* value=json_object_get(root,"youtubeProxy");
@@ -193,6 +200,7 @@ bool saveLiveFavorites(const std::vector<std::string>& ids){
     return saveSetting("liveFavorites",entries);
 }
 bool saveAutoPlayNext(bool enabled){return saveSetting("autoPlayNext",json_boolean(enabled));}
+bool saveShowHuangguo(bool enabled){return saveSetting("showHuangguo",json_boolean(enabled));}
 bool saveYoutubeProxy(const std::string& url){return saveSetting("youtubeProxy",json_string(url.c_str()));}
 bool saveYoutubeSubscription(const std::string& url,size_t index){
     return saveSetting("youtubeSubscriptionUrl",json_string(url.c_str()))
@@ -555,12 +563,13 @@ bool netReady=R_SUCCEEDED(socketInitializeDefault());if(netReady){curl_global_in
 const bool dockedMode=appletGetOperationMode()==AppletOperationMode_Console;
 net::HttpClient http;ui::PosterCache posters(http,r);media::YouTubeProvider youtube(http,loadYoutubeProxy(),dockedMode?1080:720);media::MediaSource mediaSource(http);media::CatalogLoader catalogLoader(mediaSource),hotSearchLoader(mediaSource),suggestionLoader(mediaSource);media::DetailLoader detailLoader(mediaSource);media::SearchLoader searchLoader(mediaSource);media::SourceConfigLoader sourceConfigLoader(http);media::FootballProvider football(http);media::MiguSportsProvider migu(http);media::MiguScheduleLoader miguScheduleLoader(http);media::MiguClipsLoader miguClipsLoader(http);bool miguClipsLoading=false;media::MiguPlaybackLoader miguPlaybackLoader(migu);bool miguPlaybackLoading=false;media::MiguClip pendingMiguClip;media::MiguLogin miguLogin(http);migu.setSession(miguLogin.savedSession());media::CctvLiveProvider cctv(http);cloud::QuarkProvider quark(http);cloud::QuarkLogin quarkLogin(http);cloud::BaiduProvider baidu(http);cloud::BaiduLogin baiduLogin(http);cloud::CloudLineLoader cloudLineLoader(quark,baidu);cloud::BaiduPlaybackLoader baiduPlaybackLoader(quark,baidu);bool loginApplied=false,baiduLoginApplied=false,playerFullscreen=false,resourceLoading=false,searchPending=false,lineLoading=false,autoOpenFirstShare=false,autoTryingLines=false;size_t autoTryLine=0,loadingShareIndex=0,pendingLoginLine=SIZE_MAX;Uint32 autoOpenShareAt=0;cloud::LoginView loginView;cloud::BaiduLoginView baiduLoginView;CloudKind activeCloud=CloudKind::Quark,playbackCloud=CloudKind::Quark;cloud::PlaybackSource playbackSource;std::string playbackSourceFileId;std::vector<media::SourceDefinition> sources={{"剧透","https://1.star2.cn","AiNewJuTou","csp_AiNewJuTouGuard"},{"至臻","https://www.miqk.cc","NewZhiZhen","csp_NewZhiZhenGuard"},{"虎斑","http://43.248.128.118:16969","AiNewHuBan","csp_AiNewHuBanGuard"},{"秒播","https://sdapi.e2wu4ht.com","WexGuaZi","csp_WexGuaZiGuard"}};size_t configuredSiteCount=0;bool sourceConfigOnline=false;
 net::TrojanSocksProxy youtubeTunnel;
+sources.push_back({"黄果短剧","https://huangguoai.com","HuangGuoNative","HuangGuoNative"});
 SubscriptionBoot subscriptionBoot;
 subscriptionBoot.http=&http;subscriptionBoot.proxy=&youtubeTunnel;subscriptionBoot.youtube=&youtube;
 subscriptionBoot.url=loadYoutubeSubscriptionUrl();subscriptionBoot.index=loadYoutubeSubscriptionIndex();
 if(netReady&&!subscriptionBoot.url.empty())subscriptionBoot.thread=SDL_CreateThread(subscriptionBootEntry,"youtube-subscription",&subscriptionBoot);
 quark.setPreferredMaxHeight(dockedMode&&!appletMode?1080:720);baidu.setPreferredMaxHeight(dockedMode&&!appletMode?1080:720);
-struct Category{const char*name;int kind;};std::vector<Category> categories={{"Home",0},{"Hot Movies",1},{"Hot Series",2},{"Hot Shows",3},{"Movie Filter",4},{"TV Filter",5},{"Movie Rank",6},{"TV Rank",7},{"YouTube",9},{"足球直播",8}};const char*sortCodes[]={"T","U","R","S"};const char*sortNames[]={"General","Recent Hot","Release Time","High Score"};size_t category=0;int page=1,sortIndex=0;
+struct Category{const char*name;int kind;};std::vector<Category> categories={{"Home",0},{"Hot Movies",1},{"Hot Series",2},{"热播短剧",10},{"Hot Shows",3},{"Movie Filter",4},{"TV Filter",5},{"Movie Rank",6},{"TV Rank",7},{"YouTube",9},{"足球直播",8}};const char*sortCodes[]={"T","U","R","S"};const char*sortNames[]={"General","Recent Hot","Release Time","High Score"};const char*dramaSections[]={"home","ai-duanju","ai-manju","ai-huanlian","ai-mogai","ranks/hot"};const char*dramaSectionNames[]={"推荐","成人短剧","成人漫剧","换脸","魔改","排行"};bool showHuangguo=loadShowHuangguo();size_t dramaSection=0;size_t category=0;int page=1,sortIndex=0;
 View view=View::Browse;std::vector<media::SearchResult> browseItems,searchItems;std::vector<std::pair<std::string,std::string>> searchSourceStatus;media::MediaDetail detail;cloud::ShareSession session;std::vector<cloud::CloudEntry> cloudItems;std::vector<std::string> dirs;std::string status=netReady?"Loading recommendations...":"Network failed";size_t selected=0;
 enum class YouTubePage { Explore, Subscriptions, Channel, History };
 bool youtubeNavFocus=false;int youtubeNavSelected=1;int youtubePlaybackRefreshes=0;double youtubeResumeOverride=-1;
@@ -676,7 +685,10 @@ auto runSearch=[&](const std::string& keyword){
         if(!saveSearchHistory(searchHistory)){searchHistoryReadable=false;status="搜索历史保存失败";}
     }
     activeSearchKeyword=keyword;rememberPage();searchItems.clear();searchSourceStatus.clear();posters.clear();view=View::Search;selected=0;sourceFilter=-1;
-    searchPending=searchLoader.request(sources,keyword);
+    auto searchableSources=sources;
+    if(!showHuangguo)searchableSources.erase(std::remove_if(searchableSources.begin(),searchableSources.end(),
+        [](const auto& source){return source.api.find("HuangGuo")!=std::string::npos;}),searchableSources.end());
+    searchPending=searchLoader.request(searchableSources,keyword);
     status=searchPending?"正在搜索资源...":"无法启动资源搜索";
 };
 auto openSearchHome=[&](){
@@ -720,11 +732,12 @@ auto openDetailLine=[&](size_t index)->bool{
     // to the previous provider while the new line is loading or logging in.
     if(view==View::Files){view=View::Shares;selected=index;cloudItems.clear();dirs.clear();session={};}
     const bool yueyueLine=detail.shares[index].url=="okswitch:yueyue";
-    if(detail.shares[index].url=="okswitch:guazi"||yueyueLine){
+    const bool dramaLine=detail.shares[index].url=="okswitch:huangguo";
+    if(detail.shares[index].url=="okswitch:guazi"||yueyueLine||dramaLine){
         activeCloud=CloudKind::Guazi;pendingLoginLine=SIZE_MAX;autoTryingLines=false;
         cloudItems.clear();dirs.clear();session={};
-        for(size_t episodeIndex=0;episodeIndex<detail.episodes.size();++episodeIndex){cloud::CloudEntry entry;entry.id=(yueyueLine?"yueyue-":"guazi-")+std::to_string(episodeIndex);entry.name=detail.episodes[episodeIndex].label;entry.playbackHint=(yueyueLine?"yueyue:":"")+detail.episodes[episodeIndex].opaque;entry.type=cloud::EntryType::File;cloudItems.push_back(std::move(entry));}sortCloudEntries(cloudItems);
-        selected=0;view=View::Files;status="秒播线路已加载 · "+std::to_string(cloudItems.size())+" 集";return true;
+        for(size_t episodeIndex=0;episodeIndex<detail.episodes.size();++episodeIndex){cloud::CloudEntry entry;entry.id=(dramaLine?"huangguo-":yueyueLine?"yueyue-":"guazi-")+std::to_string(episodeIndex);entry.name=detail.episodes[episodeIndex].label;entry.playbackHint=(dramaLine?"huangguo:":yueyueLine?"yueyue:":"")+detail.episodes[episodeIndex].opaque;entry.type=cloud::EntryType::File;cloudItems.push_back(std::move(entry));}sortCloudEntries(cloudItems);
+        selected=0;view=View::Files;status=(dramaLine?"短剧剧集已加载 · ":"秒播线路已加载 · ")+std::to_string(cloudItems.size())+" 集";return true;
     }
     if(baidu.canHandle({cleanUrl(detail.shares[index].url),""})&&!baiduLoginApplied){
         activeCloud=CloudKind::Baidu;autoTryingLines=false;playerFullscreen=true;
@@ -826,7 +839,7 @@ auto requestYoutubeHome=[&](){
     status=subscriptionBoot.error.empty()?"YouTube · 正在加载首页...":
         "YouTube · 订阅节点未连接，正在尝试直连...";
 };
-auto loadBrowse=[&](){miguPlaybackLoader.cancel();miguPlaybackLoading=false;miguClipsLoader.cancel();miguClipsLoading=false;miguScheduleLoader.cancel();miguScheduleFocus=false;miguTeamPicker=false;youtube.cancel();youtubeLoading=false;youtubePlaying=false;youtubeSearchMode=false;youtubeHomeWaitingForProxy=false;youtubeQueuedCards.clear();if(categories[category].kind==9){youtubeNavFocus=false;youtubeNavSelected=1;youtubePage=YouTubePage::Explore;browseItems.clear();posters.clear();selected=0;view=View::Browse;if(netReady){requestYoutubeHome();}else status="YouTube · 网络尚未就绪";return;}if(categories[category].kind==8){browseItems.clear();posters.clear();footballMatches.clear();miguMatches.clear();miguClips.clear();miguLiveMatches.clear();footballMatchFocus=false;miguMatchFocus=false;miguClipFocus=false;miguLiveFocus=false;cctvChannelFocus=false;liveError.clear();footballSourceSelected=0;selected=0;view=View::Browse;status="足球直播 · 选择线路后按 A 加载赛事";return;}int start=(page-1)*20;std::string suffix="?apikey="+apiKey+"&start="+std::to_string(start)+"&count=20";std::string endpoint;switch(categories[category].kind){case 0:endpoint="subject_collection/subject_real_time_hotest/items"+suffix;break;case 1:endpoint="movie/hot_gaia?apikey="+apiKey+"&sort=recommend&area=%E5%85%A8%E9%83%A8&start="+std::to_string(start)+"&count=20";break;case 2:endpoint="subject_collection/tv_hot/items"+suffix;break;case 3:endpoint="subject_collection/show_hot/items"+suffix;break;case 4:endpoint="movie/recommend?apikey="+apiKey+"&sort="+sortCodes[sortIndex]+"&tags=&start="+std::to_string(start)+"&count=20";break;case 5:endpoint="tv/recommend?apikey="+apiKey+"&sort="+sortCodes[sortIndex]+"&tags=&start="+std::to_string(start)+"&count=20";break;case 6:endpoint="subject_collection/movie_real_time_hotest/items"+suffix;break;default:endpoint="subject_collection/tv_real_time_hotest/items"+suffix;break;}catalogLoader.request(endpoint);browseItems.clear();if(category==0)refreshHome();status="Loading "+std::string(categories[category].name)+"...";posters.clear();selected=0;view=View::Browse;};
+auto loadBrowse=[&](){miguPlaybackLoader.cancel();miguPlaybackLoading=false;miguClipsLoader.cancel();miguClipsLoading=false;miguScheduleLoader.cancel();miguScheduleFocus=false;miguTeamPicker=false;youtube.cancel();youtubeLoading=false;youtubePlaying=false;youtubeSearchMode=false;youtubeHomeWaitingForProxy=false;youtubeQueuedCards.clear();if(categories[category].kind==9){youtubeNavFocus=false;youtubeNavSelected=1;youtubePage=YouTubePage::Explore;browseItems.clear();posters.clear();selected=0;view=View::Browse;if(netReady){requestYoutubeHome();}else status="YouTube · 网络尚未就绪";return;}if(categories[category].kind==8){browseItems.clear();posters.clear();footballMatches.clear();miguMatches.clear();miguClips.clear();miguLiveMatches.clear();footballMatchFocus=false;miguMatchFocus=false;miguClipFocus=false;miguLiveFocus=false;cctvChannelFocus=false;liveError.clear();footballSourceSelected=0;selected=0;view=View::Browse;status="足球直播 · 选择线路后按 A 加载赛事";return;}if(categories[category].kind==10){catalogLoader.request("okswitch:huangguo:"+std::string(dramaSections[dramaSection])+":"+std::to_string(page));browseItems.clear();posters.clear();selected=0;view=View::Browse;status="热播短剧 · 正在加载"+std::string(dramaSectionNames[dramaSection])+"...";return;}int start=(page-1)*20;std::string suffix="?apikey="+apiKey+"&start="+std::to_string(start)+"&count=20";std::string endpoint;switch(categories[category].kind){case 0:endpoint="subject_collection/subject_real_time_hotest/items"+suffix;break;case 1:endpoint="movie/hot_gaia?apikey="+apiKey+"&sort=recommend&area=%E5%85%A8%E9%83%A8&start="+std::to_string(start)+"&count=20";break;case 2:endpoint="subject_collection/tv_hot/items"+suffix;break;case 3:endpoint="subject_collection/show_hot/items"+suffix;break;case 4:endpoint="movie/recommend?apikey="+apiKey+"&sort="+sortCodes[sortIndex]+"&tags=&start="+std::to_string(start)+"&count=20";break;case 5:endpoint="tv/recommend?apikey="+apiKey+"&sort="+sortCodes[sortIndex]+"&tags=&start="+std::to_string(start)+"&count=20";break;case 6:endpoint="subject_collection/movie_real_time_hotest/items"+suffix;break;default:endpoint="subject_collection/tv_real_time_hotest/items"+suffix;break;}catalogLoader.request(endpoint);browseItems.clear();if(category==0)refreshHome();status="Loading "+std::string(categories[category].name)+"...";posters.clear();selected=0;view=View::Browse;};
 auto receiveBrowse=[&](){media::SearchResponse q;if(!catalogLoader.poll(q))return;
     if(categories[category].kind==8||categories[category].kind==9)return;
     if(q.succeeded){if(category==0){homeRecommendations=std::move(q.items);refreshHome();}else browseItems=std::move(q.items);if(view==View::Browse)status=std::string(categories[category].name)+" | "+std::to_string(q.total?q.total:(int)browseItems.size())+" total";}
@@ -1043,15 +1056,20 @@ auto settingsSubscription=[&](bool fromLan)->std::string{
         youtubeSubscriptionUrl=url;youtubeSubscriptionIndex=index;youtubeSubscriptionName=fetch.nodes[index].name;
         return true;
     };
-    int previousDirection=0;
+    int previousDirection=0;Uint32 directionRepeatAt=0;
     while(appletMainLoop()){
         padUpdate(&pad);u64 key=padGetButtonsDown(&pad);
         const auto stick=padGetStickPos(&pad,0);
         const int direction=stick.y>16000?-1:stick.y<-16000?1:0;
-        if(direction!=previousDirection){if(direction<0)key|=HidNpadButton_Up;if(direction>0)key|=HidNpadButton_Down;}previousDirection=direction;
+        const Uint32 directionNow=SDL_GetTicks();
+        if(direction&&(direction!=previousDirection||SDL_TICKS_PASSED(directionNow,directionRepeatAt))){
+            key|=direction<0?HidNpadButton_Up:HidNpadButton_Down;
+            directionRepeatAt=directionNow+(direction!=previousDirection?320:95);
+        }
+        previousDirection=direction;
         if(key&HidNpadButton_B)return "已取消节点选择";
-        if((key&HidNpadButton_Up)&&selected>0)--selected;
-        if((key&HidNpadButton_Down)&&selected<fetch.nodes.size())++selected;
+        if(key&HidNpadButton_Up)selected=selected?selected-1:fetch.nodes.size();
+        if(key&HidNpadButton_Down)selected=selected<fetch.nodes.size()?selected+1:0;
         if(key&HidNpadButton_A){
             std::string error;
             if(selected>0){
@@ -1112,7 +1130,9 @@ auto openSettings=[&](){
         std::fclose(file);std::remove("sdmc:/switch/OKSwitch/update-error.txt");
         if(count)message="上次安装失败："+std::string(buffer,count);
     }
-    const char* names[]={"夸克网盘","百度网盘","咪咕视频","YouTube 账号","自动播放下集","YouTube 网络代理","YouTube 机场订阅","视频源配置地址","重新加载视频源","清除视频源地址","在线更新"};
+    const char* names[]={"夸克网盘","百度网盘","咪咕视频","YouTube 账号","自动播放下集","YouTube 网络代理","YouTube 机场订阅","视频源配置地址","重新加载视频源","清除视频源地址","显示黄果短剧","在线更新"};
+    int settingsStickDirection=0;Uint32 settingsStickRepeatAt=0;
+    Uint32 settingsButtonRepeatAt=0;int settingsButtonDirection=0;
     while(appletMainLoop()){
         padUpdate(&pad);
         if(!(padGetButtons(&pad)&HidNpadButton_Minus))break;
@@ -1126,9 +1146,20 @@ auto openSettings=[&](){
         }
         padUpdate(&pad);u64 key=padGetButtonsDown(&pad);
         const auto stick=padGetStickPos(&pad,0);
-        static int previousDirection=0;
         const int direction=stick.y>16000?-1:stick.y<-16000?1:0;
-        if(direction!=previousDirection){if(direction<0)key|=HidNpadButton_Up;if(direction>0)key|=HidNpadButton_Down;}previousDirection=direction;
+        const int buttonDirection=(padGetButtons(&pad)&HidNpadButton_Up)?-1:
+            (padGetButtons(&pad)&HidNpadButton_Down)?1:0;
+        const Uint32 now=SDL_GetTicks();
+        if(buttonDirection&&(buttonDirection!=settingsButtonDirection||SDL_TICKS_PASSED(now,settingsButtonRepeatAt))){
+            key|=buttonDirection<0?HidNpadButton_Up:HidNpadButton_Down;
+            settingsButtonRepeatAt=now+(buttonDirection!=settingsButtonDirection?320:95);
+        }
+        settingsButtonDirection=buttonDirection;
+        if(direction&&(direction!=settingsStickDirection||SDL_TICKS_PASSED(now,settingsStickRepeatAt))){
+            key|=direction<0?HidNpadButton_Up:HidNpadButton_Down;
+            settingsStickRepeatAt=now+(direction!=settingsStickDirection?320:95);
+        }
+        settingsStickDirection=direction;
         if(confirmLogout){
             if(key&HidNpadButton_B)confirmLogout=false;
             else if(key&HidNpadButton_A){
@@ -1144,8 +1175,8 @@ auto openSettings=[&](){
             key=0;
         }else{
             if(key&(HidNpadButton_B|HidNpadButton_Minus))break;
-            if((key&HidNpadButton_Up)&&row>0)--row;
-            if((key&HidNpadButton_Down)&&row<10)++row;
+            if(key&HidNpadButton_Up)row=row?row-1:11;
+            if(key&HidNpadButton_Down)row=row<11?row+1:0;
             if((key&HidNpadButton_X)&&row<4)confirmLogout=true;
             else if((key&HidNpadButton_X)&&row==6){
                 if(subscriptionBoot.thread&&!subscriptionBoot.done.load())message="订阅仍在连接，请稍后清除";
@@ -1188,6 +1219,16 @@ auto openSettings=[&](){
                     }
                 }else if(row==6){message=settingsSubscription(false);
                 }else if(row==10){
+                    const bool next=!showHuangguo;
+                    if(!saveShowHuangguo(next))message="设置保存失败，请检查 SD 卡";
+                    else{
+                        showHuangguo=next;
+                        if(!next){sourceFilter=-1;searchItems.erase(std::remove_if(searchItems.begin(),searchItems.end(),
+                            [](const auto& item){return item.sourceName=="黄果短剧";}),searchItems.end());}
+                        if(!next&&categories[category].kind==10){category=2;page=1;loadBrowse();}
+                        message=next?"已显示热播短剧，位于热播剧集之后":"已隐藏黄果短剧页面和搜索来源";
+                    }
+                }else if(row==11){
                     if(!netReady)message="网络尚未就绪";
                     else{
                         net::OnlineUpdater updater(http,youtube.currentProxy(),installedNroPath(argc>0?argv[0]:nullptr));
@@ -1237,8 +1278,8 @@ auto openSettings=[&](){
         }
         const bool logged[]={loginApplied||hasSavedLogin("sdmc:/switch/OKSwitch/quark-session.json"),baiduLoginApplied||hasSavedLogin("sdmc:/switch/OKSwitch/baidu-session-v2.json"),miguLogin.savedSession().valid(),youtube.signedIn()};
         SDL_SetRenderDrawColor(r,18,24,38,255);SDL_RenderClear(r);text(r,f,"设置 · 账号、播放与视频源",60,32,1000,true);
-        for(int i=0;i<11;++i){SDL_Rect box{60,77+i*48,1160,43};SDL_SetRenderDrawColor(r,i==row?55:28,i==row?150:46,i==row?125:68,255);SDL_RenderFillRect(r,&box);text(r,f,names[i],85,box.y+9,350,true);
-            text(r,f,i<4?(logged[i]?"已有登录信息":i==3&&!youtube.configured()?"未配置配对码客户端":"未登录"):i==4?(autoPlayNext?"开启":"关闭"):i==5?(!youtubeSubscriptionName.empty()?"当前使用订阅节点":subscriptionBoot.thread?"订阅连接中":youtubeProxyUrl.empty()?"直连（不使用代理）":youtubeProxyUrl):i==6?(youtubeSubscriptionUrl.empty()?"未配置":subscriptionBoot.thread?"正在连接...":youtubeSubscriptionName.empty()?"已配置 · 未连接":"已启用 · "+youtubeSubscriptionName):i==7?(sourceConfigUrl.empty()?"未配置":sourceConfigUrl):i==8?"立即更新来源列表":i==9?"清除已保存的地址":"经当前 YouTube 代理检查和下载",455,box.y+9,740,true);
+        for(int i=0;i<12;++i){SDL_Rect box{60,77+i*44,1160,40};SDL_SetRenderDrawColor(r,i==row?55:28,i==row?150:46,i==row?125:68,255);SDL_RenderFillRect(r,&box);text(r,f,names[i],85,box.y+7,350,true);
+            text(r,f,i<4?(logged[i]?"已有登录信息":i==3&&!youtube.configured()?"未配置配对码客户端":"未登录"):i==4?(autoPlayNext?"开启":"关闭"):i==5?(!youtubeSubscriptionName.empty()?"当前使用订阅节点":subscriptionBoot.thread?"订阅连接中":youtubeProxyUrl.empty()?"直连（不使用代理）":youtubeProxyUrl):i==6?(youtubeSubscriptionUrl.empty()?"未配置":subscriptionBoot.thread?"正在连接...":youtubeSubscriptionName.empty()?"已配置 · 未连接":"已启用 · "+youtubeSubscriptionName):i==7?(sourceConfigUrl.empty()?"未配置":sourceConfigUrl):i==8?"立即更新来源列表":i==9?"清除已保存的地址":i==10?(showHuangguo?"显示":"隐藏（默认）"):"经当前 YouTube 代理检查和下载",455,box.y+7,740,true);
         }
         text(r,f,message,65,615,1150,true);text(r,f,row==6?"A 选择节点 · Y 扫码设置地址 · X 清除订阅 · B 返回":row==7?"A 手柄输入 · Y 局域网扫码输入 · B 返回":row==3?"A 现有配对 · + 电视端实验 · Y 导入客户端 · X 退出 · B 返回":"上下选择 · A 登录／修改 · X 退出账号 · B 返回",65,665,1150,true);
         if(confirmLogout){SDL_SetRenderDrawColor(r,12,21,32,255);SDL_Rect dialog{240,250,800,200};SDL_RenderFillRect(r,&dialog);std::string title=std::string("退出 ")+names[row]+" 的登录？";text(r,f,title,(1280-textWidth(f,title))/2,290,760,true);text(r,f,"A 确认退出    B 取消",465,375,600,true);}
@@ -1290,10 +1331,17 @@ auto playMiguLive=[&](const media::MiguLiveMatch& match){
     }
 };
 int stickDirection=0;Uint32 stickRepeatAt=0;bool historyAHeld=false;Uint32 historyAHoldStarted=0;size_t historyAHoldIndex=0;bool historyDeletePrompt=false;size_t historyDeleteIndex=0;
+Uint32 mainButtonRepeatAt=0;int mainButtonDirection=0;
 while(appletMainLoop()){padUpdate(&pad);u64 k=padGetButtonsDown(&pad);const u64 heldButtons=padGetButtons(&pad);bool historyOpenRequested=false;
 HidAnalogStickState stick=padGetStickPos(&pad,0);int absX=stick.x<0?-stick.x:stick.x,absY=stick.y<0?-stick.y:stick.y;int nextStick=0;
 if(absX>16000||absY>16000)nextStick=absX>absY?(stick.x>0?1:2):(stick.y>0?3:4);
 Uint32 now=SDL_GetTicks();if(nextStick){bool fire=nextStick!=stickDirection||SDL_TICKS_PASSED(now,stickRepeatAt);if(fire){k|=nextStick==1?HidNpadButton_Right:nextStick==2?HidNpadButton_Left:nextStick==3?HidNpadButton_Up:HidNpadButton_Down;stickRepeatAt=now+(nextStick!=stickDirection?320:110);}stickDirection=nextStick;}else stickDirection=0;
+const int nextButton=(heldButtons&HidNpadButton_Up)?-1:(heldButtons&HidNpadButton_Down)?1:0;
+if(nextButton&&(nextButton!=mainButtonDirection||SDL_TICKS_PASSED(now,mainButtonRepeatAt))){
+    k|=nextButton<0?HidNpadButton_Up:HidNpadButton_Down;
+    mainButtonRepeatAt=now+(nextButton!=mainButtonDirection?320:95);
+}
+mainButtonDirection=nextButton;
 if(k&HidNpadButton_Minus){openSettings();if(exitForUpdate)break;if(view==View::Browse&&categories[category].kind==9)loadBrowse();k=0;}
 if(youtubeHomeWaitingForProxy&&(!subscriptionBoot.thread||subscriptionBoot.done.load())){
     if(view==View::Browse&&categories[category].kind==9&&youtubePage==YouTubePage::Explore)
@@ -1660,7 +1708,7 @@ if(view==View::Browse&&categories[category].kind==9){
     }
 }
 
-if(netReady&&(k&HidNpadButton_Y)&&view==View::Browse&&(category==0||categories[category].kind==9)){openSearchHome();if(categories[category].kind==9){youtubeSearchMode=true;searchSuggestions.clear();status="YouTube · 输入视频名称";}k=0;}
+if(netReady&&(k&HidNpadButton_Y)&&view==View::Browse&&(category==0||categories[category].kind==9||categories[category].kind==10)){openSearchHome();if(categories[category].kind==9){youtubeSearchMode=true;searchSuggestions.clear();status="YouTube · 输入视频名称";}k=0;}
 if(view==View::SearchHome&&youtubeSearchMode&&(k&HidNpadButton_ZR)){
     std::string query=searchInput;
     if(keyboard(query,"YouTube 搜索","输入中文或英文视频名称")&&!query.empty())runSearch(query);
@@ -1679,15 +1727,21 @@ if(netReady&&(k&HidNpadButton_X)&&view!=View::SearchHome){if(view==View::Browse&
         if(it!=cctvChannels.end())selected=(size_t)(it-cctvChannels.begin());
         status=added?"已收藏频道 · 排在列表前面":"已取消频道收藏";k=0;
     }else if(!miguClipFocus&&!miguLiveFocus)status="体育 · 进入咪咕赛事列表后可按 X 扫码登录";
+}else if(view==View::Browse&&categories[category].kind==10){dramaSection=(dramaSection+1)%6;page=1;loadBrowse();k=0;
 }else if(view==View::Browse&&(categories[category].kind==4||categories[category].kind==5)){sortIndex=(sortIndex+1)%4;page=1;loadBrowse();}else{std::string u;if(keyboard(u,"Quark share link","Paste https://pan.quark.cn/s/..."))openShare(u);}}
-if(view==View::Browse&&!youtubePlaying&&(k&HidNpadButton_L)){category=category?category-1:categories.size()-1;page=1;sortIndex=0;loadBrowse();}
-if(view==View::Browse&&!youtubePlaying&&(k&HidNpadButton_R)){category=(category+1)%categories.size();page=1;sortIndex=0;loadBrowse();}
+if(view==View::Browse&&!youtubePlaying&&(k&HidNpadButton_L)){do{category=category?category-1:categories.size()-1;}while(!showHuangguo&&categories[category].kind==10);page=1;sortIndex=0;loadBrowse();}
+if(view==View::Browse&&!youtubePlaying&&(k&HidNpadButton_R)){do{category=(category+1)%categories.size();}while(!showHuangguo&&categories[category].kind==10);page=1;sortIndex=0;loadBrowse();}
 if(view==View::Browse&&categories[category].kind>0&&categories[category].kind<6&&(k&HidNpadButton_ZL)&&page>1){--page;loadBrowse();}
 if(view==View::Browse&&categories[category].kind>0&&categories[category].kind<6&&(k&HidNpadButton_ZR)){++page;loadBrowse();}
+if(view==View::Browse&&categories[category].kind==10&&dramaSection!=0){
+    if((k&HidNpadButton_ZL)&&page>1){--page;loadBrowse();}
+    if(k&HidNpadButton_ZR){++page;loadBrowse();}
+}
 // Keep source identity stable while ranking tabs by the number of results.
 std::vector<size_t> sourceOrder,sourceResultCounts(sources.size(),0);
 sourceOrder.reserve(sources.size());
-for(size_t i=0;i<sources.size();++i)sourceOrder.push_back(i);
+for(size_t i=0;i<sources.size();++i)
+    if(showHuangguo||sources[i].api.find("HuangGuo")==std::string::npos)sourceOrder.push_back(i);
 for(const auto& item:searchItems){
     for(size_t i=0;i<sources.size();++i)if(item.sourceName==sources[i].name){++sourceResultCounts[i];break;}
 }
@@ -1716,7 +1770,8 @@ if(!lineLoading&&(view==View::Shares||view==View::Files)&&!detail.shares.empty()
 }
 std::vector<size_t> visibleSearch;
 for(size_t i=0;i<searchItems.size();++i)
-    if(sourceFilter<0||searchItems[i].sourceName==sources[sourceFilter].name)visibleSearch.push_back(i);
+    if((showHuangguo||searchItems[i].sourceName!="黄果短剧")
+        &&(sourceFilter<0||searchItems[i].sourceName==sources[sourceFilter].name))visibleSearch.push_back(i);
  if(view==View::Browse&&categories[category].kind==9&&youtubePage==YouTubePage::Explore
      &&youtubeNavSelected==1&&!youtubeQueuedCards.empty()
      &&(((k&HidNpadButton_Down)!=0&&selected+3>=browseItems.size())
@@ -1726,7 +1781,7 @@ for(size_t i=0;i<searchItems.size();++i)
          std::make_move_iterator(youtubeQueuedCards.begin()+next));
      youtubeQueuedCards.erase(youtubeQueuedCards.begin(),youtubeQueuedCards.begin()+next);
  }
- size_t count=view==View::SearchHome?searchSuggestions.size():view==View::History?historyCards().size():view==View::Favorites?favorites.size():view==View::Browse?(categories[category].kind==8?(footballMatchFocus?(cctvChannelFocus?cctvChannels.size():(miguLiveFocus?miguLiveMatches.size():(miguClipFocus?miguClips.size():(miguMatchFocus?miguMatches.size()+(miguScheduleFocus?0:1):footballMatches.size())))):footballSources.size()):browseItems.size()):(view==View::Search?visibleSearch.size():(view==View::Shares?detail.shares.size():cloudItems.size()));if(view==View::Browse&&count){if(categories[category].kind==8){if((k&HidNpadButton_Down)&&selected+1<count)++selected;if((k&HidNpadButton_Up)&&selected)--selected;}else{if((k&HidNpadButton_Right)&&selected+1<count)++selected;if((k&HidNpadButton_Left)&&selected)--selected;const size_t columns=categories[category].kind==9?3:6;if((k&HidNpadButton_Down)&&selected+columns<count)selected+=columns;if((k&HidNpadButton_Up)&&selected>=columns)selected-=columns;}}else if(view==View::SearchHome){
+ size_t count=view==View::SearchHome?searchSuggestions.size():view==View::History?historyCards().size():view==View::Favorites?favorites.size():view==View::Browse?(categories[category].kind==8?(footballMatchFocus?(cctvChannelFocus?cctvChannels.size():(miguLiveFocus?miguLiveMatches.size():(miguClipFocus?miguClips.size():(miguMatchFocus?miguMatches.size()+(miguScheduleFocus?0:1):footballMatches.size())))):footballSources.size()):browseItems.size()):(view==View::Search?visibleSearch.size():(view==View::Shares?detail.shares.size():cloudItems.size()));if(view==View::Browse&&count){if(categories[category].kind==8){if(k&HidNpadButton_Down)selected=selected+1<count?selected+1:0;if(k&HidNpadButton_Up)selected=selected?selected-1:count-1;}else{if((k&HidNpadButton_Right)&&selected+1<count)++selected;if((k&HidNpadButton_Left)&&selected)--selected;const size_t columns=categories[category].kind==9?3:6;if((k&HidNpadButton_Down)&&selected+columns<count)selected+=columns;if((k&HidNpadButton_Up)&&selected>=columns)selected-=columns;}}else if(view==View::SearchHome){
 const std::string rows[]={"1234567890","QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const int rowLengths[]={10,10,9,7,3};
 auto refreshSuggestions=[&](){searchSuggestions.clear();if(youtubeSearchMode)return;auto add=[&](const std::string& title){if(title.empty()||std::find(searchSuggestions.begin(),searchSuggestions.end(),title)!=searchSuggestions.end())return;if(searchInput.empty()||searchScore(title,searchInput)>0)searchSuggestions.push_back(title);};for(const auto& title:searchHistory)add(title);for(const auto& title:hotSearches)add(title);for(const auto& item:homeRecommendations)add(item.title);if(searchSuggestions.size()>10)searchSuggestions.resize(10);if(suggestionSelected>=searchSuggestions.size())suggestionSelected=searchSuggestions.empty()?0:searchSuggestions.size()-1;};
 bool changed=false;
@@ -1739,7 +1794,7 @@ if((k&HidNpadButton_Right)&&selected+1<count)++selected;
 if((k&HidNpadButton_Left)&&selected)--selected;
 if((k&HidNpadButton_Down)&&selected+columns<count)selected+=columns;
 if((k&HidNpadButton_Up)&&selected>=(size_t)columns)selected-=columns;
-}else{if(count&&(k&HidNpadButton_Down))selected=std::min(selected+1,count-1);if(count&&(k&HidNpadButton_Up)&&selected)--selected;}
+}else{if(count&&(k&HidNpadButton_Down))selected=selected+1<count?selected+1:0;if(count&&(k&HidNpadButton_Up))selected=selected?selected-1:count-1;}
 if(view==View::Browse&&categories[category].kind==8&&miguMatchFocus&&miguScheduleFocus&&!miguClipFocus&&!miguSchedule.empty()&&!miguScheduleLoader.busy()&&SDL_TICKS_PASSED(SDL_GetTicks(),miguScheduleRetryAt)){
     if((k&HidNpadButton_Up)&&selected<3&&!miguNoEarlier){if(miguScheduleLoader.start(miguSchedule.front().day,"up"))status="咪咕中超 · 正在加载更早比赛...";}
     else if((k&HidNpadButton_Down)&&selected+3>=miguMatches.size()&&!miguNoLater){if(miguScheduleLoader.start(miguSchedule.back().day,"down"))status="咪咕中超 · 正在加载更晚比赛...";}
@@ -1879,6 +1934,7 @@ else if((k&HidNpadButton_A)&&view==View::Browse&&categories[category].kind==9&&!
         // Give the proxy to playback immediately, not after resolving the URL.
         posters.clear();youtube.playback(item.detailUrl.substr(9));youtubeLoading=true;youtubePlaying=true;status="YouTube · 正在获取播放地址...";}
 }
+else if((k&HidNpadButton_A)&&view==View::Browse&&categories[category].kind==10&&selected<browseItems.size())openResource(browseItems[selected]);
 else if((k&HidNpadButton_A)&&view==View::Browse&&categories[category].kind!=9&&!browseItems.empty())runSearch(browseItems[selected].title);
 else if((k&HidNpadButton_A)&&view==View::Search&&selected<visibleSearch.size()){
     openResource(searchItems[visibleSearch[selected]]);
@@ -1909,7 +1965,7 @@ else if(((k&HidNpadButton_A)||resumeLoginPlayback||autoPlayEpisode)&&view==View:
                 std::string ignored;cleanupPlayback(ignored);
                 playbackSource={};playbackSourceFileId.clear();
             }
-            status=activeCloud==CloudKind::Guazi?"正在解析秒播地址...":(activeCloud==CloudKind::Baidu?"正在解析百度播放地址...":"正在转存并解析播放地址...");showPlayerStatus(status);
+            status=activeCloud==CloudKind::Guazi?(detailItem.detailUrl.rfind("okswitch:huangguo:",0)==0?"正在获取短剧播放地址...":"正在解析秒播地址..."):(activeCloud==CloudKind::Baidu?"正在解析百度播放地址...":"正在转存并解析播放地址...");showPlayerStatus(status);
             cloud::ProviderResult<cloud::PlaybackSource> source;
             bool cancelled=false;
             if(activeCloud==CloudKind::Guazi){source=mediaSource.guaziPlayback(cloudItems[selected].playbackHint);}
@@ -2001,7 +2057,9 @@ if(autoOpenFirstShare&&view==View::Shares&&SDL_TICKS_PASSED(SDL_GetTicks(),autoO
     if(autoTryLine<detail.shares.size())openDetailLine(autoTryLine);
     else{autoOpenFirstShare=false;autoTryingLines=false;status="所有 "+std::to_string(detail.shares.size())+" 条网盘线路均已失效或不可用";}
 }
-visibleSearch.clear();for(size_t i=0;i<searchItems.size();++i)if(sourceFilter<0||searchItems[i].sourceName==sources[sourceFilter].name)visibleSearch.push_back(i);
+visibleSearch.clear();for(size_t i=0;i<searchItems.size();++i)
+    if((showHuangguo||searchItems[i].sourceName!="黄果短剧")
+        &&(sourceFilter<0||searchItems[i].sourceName==sources[sourceFilter].name))visibleSearch.push_back(i);
 SDL_SetRenderDrawColor(r,18,24,38,255);SDL_RenderClear(r);std::string posterError=(view==View::Browse&&selected<browseItems.size()&&browseItems[selected].detailUrl!="okswitch:history")?posters.error(browseItems[selected].posterUrl):"";text(r,f,"OKSwitch | "+status+(posterError.empty()?"":" | Poster: "+posterError),40,22);size_t first=selected>9?selected-9:0;
 if(view==View::Browse&&categories[category].kind==9){
     const std::string imageProxy=youtube.currentProxy();
@@ -2089,7 +2147,7 @@ if(view==View::Browse&&categories[category].kind==9){
     if(youtubeLoading)text(r,f,"正在加载 · B 取消",620,685,500,true);
     else if(browseItems.empty())text(r,f,"暂无内容 · Y 搜索 · 左键打开导航",365,350,750,true);
     else text(r,f,std::to_string(selected+1)+" / "+std::to_string(browseItems.size())+"   方向键选择 · A 打开 · Y 搜索 · X 订阅",270,685,975,true);
-}else if(view==View::Browse){std::string tabs="L/R  ["+std::string(categories[category].name)+"]";if(categories[category].kind==4||categories[category].kind==5)tabs+="  X Sort: "+std::string(sortNames[sortIndex]);text(r,f,tabs+((categories[category].kind>0&&categories[category].kind<6)?"  Page "+std::to_string(page):""),40,62);if(categories[category].kind==8){
+}else if(view==View::Browse){std::string tabs="L/R  ["+std::string(categories[category].name)+"]";if(categories[category].kind==4||categories[category].kind==5)tabs+="  X Sort: "+std::string(sortNames[sortIndex]);if(categories[category].kind==10)tabs+="  X 分类: "+std::string(dramaSectionNames[dramaSection]);text(r,f,tabs+((categories[category].kind>0&&categories[category].kind<6||categories[category].kind==10&&dramaSection!=0)?"  Page "+std::to_string(page):""),40,62);if(categories[category].kind==8){
     if(miguScheduleFocus&&miguMatchFocus&&!miguClipFocus){
         posters.beginFrame(2);
         text(r,f,"咪咕中超 · "+(miguTeamId.empty()?std::string("全部赛程"):miguTeamName),40,108,550,true);
@@ -2270,7 +2328,11 @@ else if(view==View::History||view==View::Favorites){
 else{
     posters.beginFrame(2);
     if(lineLoading){SDL_SetRenderDrawColor(r,8,13,22,255);SDL_Rect loadingPanel{30,75,430,225};SDL_RenderFillRect(r,&loadingPanel);text(r,f,"正在切换并加载线路...",50,260,390,true);}
-    else drawLogin({30,75,430,225},false);
+    else if(detailItem.detailUrl.rfind("okswitch:huangguo:",0)==0){
+        SDL_SetRenderDrawColor(r,8,13,22,255);SDL_Rect coverPanel{30,75,430,225};SDL_RenderFillRect(r,&coverPanel);
+        if(auto* cover=posters.get(detail.posterUrl)){SDL_Rect destination{150,84,172,190};SDL_RenderCopy(r,cover,nullptr,&destination);}
+        else text(r,f,"黄果短剧 · 剧集列表",95,170,320,true);
+    }else drawLogin({30,75,430,225},false);
     text(r,f,detail.title.empty()?"夸克分享":detail.title,485,80,740,true);
     for(size_t i=0;i<detailFields.size();++i){
         const auto& field=detailFields[i];
@@ -2297,7 +2359,8 @@ else{
         SDL_SetRenderDrawColor(r,i==activeShare?45:28,i==activeShare?150:46,i==activeShare?120:68,255);SDL_RenderFillRect(r,&tab);
         text(r,f,detail.shares[i].label,x+12,330,206,true);
     }
-    text(r,f,"L/R 自动加载线路    A 打开文件夹 / 选择剧集    B 返回",30,373);
+    text(r,f,detailItem.detailUrl.rfind("okswitch:huangguo:",0)==0?
+        "上下选择剧集 · A 播放 · B 返回":"L/R 自动加载线路    A 打开文件夹 / 选择剧集    B 返回",30,373);
     if(view==View::Shares)text(r,f,detail.shares.empty()?"暂无可用线路":"线路未加载，按 A 重试",30,420);
     else{
         first=(selected/8)*8;
@@ -2310,7 +2373,7 @@ else{
     }
 }
 
-if(!(view==View::Browse&&categories[category].kind==9))text(r,f,view==View::Browse?(categories[category].kind==8?"L/R 分类 · 上下选择足球线路 · A 打开":categories[category].kind==9?"L/R 分类 · Y 搜索 · X 游客/订阅 · A 打开 · B 返回 · − 设置":"L/R 分类  ZL/ZR 翻页  X 排序/链接  Y 搜索  A 打开  B 返回"):view==View::SearchHome?"方向键选择 · A 输入/搜索 · X 退格 · 右键进入候选 · B 返回":"方向键 选择  L/R 来源或线路  A 确认  B 逐级返回",40,670);
+if(!(view==View::Browse&&categories[category].kind==9))text(r,f,view==View::Browse?(categories[category].kind==8?"L/R 分类 · 上下选择足球线路 · A 打开":categories[category].kind==10?"L/R 主分类 · X 短剧分类 · ZL/ZR 翻页 · A 打开剧集":"L/R 分类  ZL/ZR 翻页  X 排序/链接  Y 搜索  A 打开  B 返回"):view==View::SearchHome?"方向键选择 · A 输入/搜索 · X 退格 · 右键进入候选 · B 返回":"方向键 选择  L/R 来源或线路  A 确认  B 逐级返回",40,670);
 if(playerFullscreen){SDL_SetRenderDrawColor(r,8,13,22,255);SDL_RenderClear(r);drawLogin({300,35,680,640},true);}
 if(detailFieldOpen){
     auto lines=summaryLines(detailFieldText);size_t maxScroll=lines.size()>10?lines.size()-10:0;

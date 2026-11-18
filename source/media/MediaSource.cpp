@@ -1,6 +1,7 @@
 #include "okswitch/media/MediaSource.hpp"
 #include "okswitch/media/Guazi.hpp"
 #include "okswitch/media/YueYue.hpp"
+#include "okswitch/media/Huangguo.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -293,6 +294,14 @@ SearchResponse MediaSource::browse(const SourceDefinition& source, const std::st
 
 SearchResponse MediaSource::catalog(const std::string& endpoint, const std::atomic<bool>* cancel) const
 {
+    constexpr const char* dramaPrefix="okswitch:huangguo:";
+    if(endpoint.rfind(dramaPrefix,0)==0){
+        const std::string route=endpoint.substr(std::strlen(dramaPrefix));
+        const auto separator=route.rfind(':');
+        const std::string section=separator==std::string::npos?route:route.substr(0,separator);
+        const int page=separator==std::string::npos?1:std::max(1,std::atoi(route.c_str()+separator+1));
+        return huangguo::catalog(httpClient_,section,page,cancel);
+    }
     SearchResponse result;
     net::HttpRequest request;
     const bool hot360 = endpoint == "okswitch:360-hot";
@@ -393,6 +402,8 @@ SearchResponse MediaSource::catalog(const std::string& endpoint, const std::atom
 SearchResponse MediaSource::search(const SourceDefinition& source, const std::string& keyword,
                                    const std::atomic<bool>* cancel) const
 {
+    if(source.api.find("HuangGuo")!=std::string::npos)
+        return huangguo::search(httpClient_,keyword,cancel);
     if(source.api.find("YueYue")!=std::string::npos){
         auto response=yueyue::search(httpClient_,keyword,cancel);
         for(auto& item:response.items)item.sourceName=source.name;
@@ -471,6 +482,9 @@ SearchResponse MediaSource::search(const SourceDefinition& source, const std::st
 DetailResponse MediaSource::detail(const std::string& url,
                                    const std::atomic<bool>* cancel) const
 {
+    constexpr const char* dramaPrefix="okswitch:huangguo:";
+    if(url.rfind(dramaPrefix,0)==0)
+        return huangguo::detail(httpClient_,url.substr(std::strlen(dramaPrefix)),cancel);
     constexpr const char* yueyuePrefix="okswitch:yueyue:";
     if(url.rfind(yueyuePrefix,0)==0)
         return yueyue::detail(httpClient_,url.substr(std::strlen(yueyuePrefix)),cancel);
@@ -682,6 +696,9 @@ MediaDetail MediaSource::parseDetailHtml(const std::string& html)
 cloud::ProviderResult<cloud::PlaybackSource> MediaSource::guaziPlayback(
     const std::string& opaque, const std::atomic<bool>* cancel) const
 {
+    constexpr const char* dramaPrefix="huangguo:";
+    if(opaque.rfind(dramaPrefix,0)==0)
+        return huangguo::playback(httpClient_,opaque.substr(std::strlen(dramaPrefix)),cancel);
     constexpr const char* yueyuePrefix="yueyue:";
     if(opaque.rfind(yueyuePrefix,0)==0)
         return yueyue::playback(httpClient_,opaque.substr(std::strlen(yueyuePrefix)),cancel);

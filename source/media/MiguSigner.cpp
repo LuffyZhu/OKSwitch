@@ -102,13 +102,20 @@ struct Import
     M3RawCall function;
 };
 
-constexpr Import kImports[] = {
+constexpr Import kCommonImports[] = {
     {"a", "i(i)", zero0}, {"b", "i(iiii)", zero0},
-    {"c", "i(iii)", zero0}, {"d", "i(iii)", indirect},
-    {"e", "i()", fingerprint}, {"f", "i(iiii)", zero0},
-    {"g", "i(iii)", zero0}, {"h", "i(iiii)", zero0},
-    {"i", "i()", domain}, {"j", "i(i)", zero0},
+    {"c", "i(iii)", zero0}, {"j", "i(i)", zero0},
     {"k", "i(iIii)", zero0}, {"l", "v(iiii)", noop0}
+};
+constexpr Import kOldImports[] = {
+    {"d", "i(iii)", indirect}, {"e", "i()", fingerprint},
+    {"f", "i(iiii)", zero0}, {"g", "i(iii)", zero0},
+    {"h", "i(iiii)", zero0}, {"i", "i()", domain}
+};
+constexpr Import kCurrentImports[] = {
+    {"d", "i()", fingerprint}, {"e", "i(iii)", indirect},
+    {"f", "i()", domain}, {"g", "i(iiii)", zero0},
+    {"h", "i(iii)", zero0}, {"i", "i(iiii)", zero0}
 };
 
 struct Machine
@@ -211,8 +218,19 @@ bool signMiguPlaylist(net::HttpClient& http, const std::string& url,
     if (!machine.runtime) { error = "无法启动咪咕校验环境"; return false; }
     status = m3_LoadModule(machine.runtime, machine.module);
     if (status) { error = "咪咕校验模块加载失败"; return false; }
-    for (const auto& import : kImports)
+    // The site changed these six import signatures. Probe d before linking
+    // the remaining imports so both module revisions remain usable.
+    const bool currentImports = m3_LinkRawFunction(machine.module, "a", "d",
+        "i()", fingerprint) == m3Err_none;
+    for (const auto& import : kCommonImports)
     {
+        status = m3_LinkRawFunction(machine.module, "a", import.name,
+                                    import.signature, import.function);
+        if (status) { error = "咪咕校验模块接口不兼容"; return false; }
+    }
+    for (const auto& import : currentImports ? kCurrentImports : kOldImports)
+    {
+        if (currentImports && std::strcmp(import.name, "d") == 0) continue;
         status = m3_LinkRawFunction(machine.module, "a", import.name,
                                     import.signature, import.function);
         if (status) { error = "咪咕校验模块接口不兼容"; return false; }

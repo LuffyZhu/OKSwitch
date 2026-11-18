@@ -3,9 +3,11 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
+#include <mbedtls/aes.h>
 }
 
 #include <vector>
+#include <algorithm>
 #include <cstdio>
 #include <cstdint>
 #include <ctime>
@@ -46,6 +48,24 @@ void writeArtwork(const std::string& url,const std::string& bytes){
         &&std::fwrite(bytes.data(),1,bytes.size(),file)==bytes.size();
     if(std::fclose(file)!=0)ok=false;
     if(!ok)std::remove(path.c_str());
+}
+bool decryptHuangguoImage(std::string& bytes){
+    if(bytes.size()<16||bytes.size()%16!=0)return false;
+    constexpr unsigned char key[]="f5d965df75336270";
+    unsigned char iv[16]={'9','7','b','6','0','3','9','4','a','b','c','2','f','b','e','1'};
+    mbedtls_aes_context aes;mbedtls_aes_init(&aes);
+    const int keyResult=mbedtls_aes_setkey_dec(&aes,key,128);
+    std::string plain(bytes.size(),'\0');
+    const int result=keyResult==0?mbedtls_aes_crypt_cbc(&aes,MBEDTLS_AES_DECRYPT,
+        bytes.size(),iv,reinterpret_cast<const unsigned char*>(bytes.data()),
+        reinterpret_cast<unsigned char*>(plain.data())):-1;
+    mbedtls_aes_free(&aes);
+    if(result!=0||!(plain.rfind("\xff\xd8",0)==0||plain.rfind("\x89PNG",0)==0
+        ||plain.rfind("RIFF",0)==0))return false;
+    const unsigned char padding=(unsigned char)plain.back();
+    if(padding>0&&padding<=16&&std::all_of(plain.end()-padding,plain.end(),
+            [&](char c){return (unsigned char)c==padding;}))plain.resize(plain.size()-padding);
+    bytes=std::move(plain);return true;
 }
 }
 PosterCache::PosterCache(net::HttpClient& httpClient, SDL_Renderer* renderer)
@@ -193,13 +213,15 @@ bool PosterCache::load(const std::string& url, Image& image)
     const bool youtubeVideo=url.find("ytimg.com")!=std::string::npos;
     const bool youtubeAvatar=url.find("ggpht.com")!=std::string::npos
         ||url.find("googleusercontent.com")!=std::string::npos;
-    const bool youtubeArtwork=youtubeVideo||youtubeAvatar;
+    const bool huangguoArtwork=url.find(".qnlycc.cn/")!=std::string::npos;
+    const bool youtubeArtwork=youtubeVideo||youtubeAvatar||huangguoArtwork;
     request.closeConnection = !youtubeArtwork;
     request.cancel = image.job.cancel.get();
     // The image CDN rejects the generic OKSwitch user agent (HTTP 418).
     request.headers.push_back({"User-Agent",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"});
+    if(huangguoArtwork)request.headers.push_back({"Referer","https://huangguoai.com/"});
     const size_t hostStart=url.find("://");
     if(hostStart!=std::string::npos){
         const size_t start=hostStart+3;
@@ -227,6 +249,10 @@ bool PosterCache::load(const std::string& url, Image& image)
     };
     if (!response.succeeded) return fail("Download: "+response.error);
     if (response.body.empty()) return fail("HTTP "+std::to_string(response.statusCode)+" empty body");
+    if(huangguoArtwork&&response.body.size()%16==0
+        &&response.body.rfind("\xff\xd8",0)!=0&&response.body.rfind("\x89PNG",0)!=0
+        &&response.body.rfind("RIFF",0)!=0
+        &&!decryptHuangguoImage(response.body))return fail("Poster decryption failed");
 
     // The response format can differ from the URL suffix.
     const auto* data=reinterpret_cast<const unsigned char*>(response.body.data());
