@@ -1,8 +1,9 @@
 #include "okswitch/media/MiguSportsProvider.hpp"
-#include "okswitch/media/MiguSigner.hpp"
 
 #include <jansson.h>
+#include <mbedtls/md5.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <sstream>
@@ -78,41 +79,84 @@ bool footballCompetition(const std::string& name)
     return false;
 }
 
-json_t* playInfo(net::HttpClient& http, const MiguSession& session,
-                 const std::string& id, std::string& error, const std::atomic<bool>* cancel = nullptr,
-                 int rateType=3)
+std::string md5Hex(const std::string& input)
 {
-    net::HttpRequest request;request.cancel=cancel;request.closeConnection=true;
-    request.url = std::string(kApi) + "/playurl/v3/play/playurl?contId=" + id
-        + "&rateType="+std::to_string(rateType)+"&startPlay=true&xh265=false&chip=mgwww&channelId=0132_10010001005";
-    request.connectTimeoutSeconds = 7;
-    request.timeoutSeconds = 16;
-    request.maxResponseBytes = 512 * 1024;
-    request.headers = {{"User-Agent", kAgent}, {"Referer", "https://www.miguvideo.com/"},
-        {"Accept-Encoding","identity"}, {"appId", "miguvideo"}, {"terminalId", "www"}};
-    if (session.valid())
-    {
-        // Match the official migu_login_callback: signed userInfo is the
-        // whole original response object; the application ID is not deviceId.
-        request.headers.push_back({"channel", "H5"});
-        request.headers.push_back({"userId", session.userId});
-        request.headers.push_back({"userToken", session.userToken});
-        request.headers.push_back({"userInfo", session.userInfoJson});
-        request.headers.push_back({"sign", session.sign});
-        request.headers.push_back({"clientId", "27fb3129-5a54-45bc-8af1-7dc8f1155501"});
-        request.headers.push_back({"SDKCEId", "27fb3129-5a54-45bc-8af1-7dc8f1155501"});
+    unsigned char digest[16]{};
+    if(mbedtls_md5_ret(reinterpret_cast<const unsigned char*>(input.data()),input.size(),digest)!=0)
+        return {};
+    constexpr char digits[]="0123456789abcdef";
+    std::string result;result.reserve(32);
+    for(unsigned char byte:digest){result.push_back(digits[byte>>4]);result.push_back(digits[byte&15]);}
+    return result;
+}
 
+json_t* androidPlayInfo(net::HttpClient& http,const MiguSession& session,
+    const std::string& id,int rateType,std::string& error,const std::atomic<bool>* cancel)
+{
+    const auto milliseconds=std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string timestamp=std::to_string(milliseconds);
+    const std::string signature=md5Hex(md5Hex(timestamp+id+"26000370")
+        +"3ce941cc3cbc40528bfd1c64f9fdf6c0migu0123");
+    if(signature.empty()){error="咪咕请求签名计算失败";return nullptr;}
+    net::HttpRequest request;request.cancel=cancel;request.closeConnection=true;
+    request.url="https://play.miguvideo.com/playurl/v1/play/playurl?sign="+signature
+        +"&rateType="+std::to_string(rateType)+"&contId="+id+"&timestamp="+timestamp
+        +"&salt=1230024&flvEnable=false&super4k=true";
+    request.connectTimeoutSeconds=7;request.timeoutSeconds=16;
+    request.maxResponseBytes=512*1024;
+    request.headers={{"User-Agent",kAgent},{"AppVersion","2600037000"},
+        {"TerminalId","android"},{"X-UP-CLIENT-CHANNEL-ID","2600037000-99000-200300220100002"}};
+    if(id!="641886683"&&id!="641886773")
+        request.headers.push_back({"appCode","miguvideo_default_android"});
+    if(rateType>2&&session.valid()){
+        request.headers.push_back({"UserId",session.userId});
+        request.headers.push_back({"UserToken",session.userToken});
     }
-    const auto response = http.get(request);
-    json_t* root = nullptr;
-    if (response.succeeded && response.statusCode == 200)
-    {
-        json_error_t parseError{};
-        root = json_loadb(response.body.data(), response.body.size(), 0, &parseError);
-    }
-    if (!root) error = response.error.empty()
-        ? "咪咕播放地址请求失败 HTTP " + std::to_string(response.statusCode) : response.error;
+    const auto response=http.get(request);
+    if(!response.succeeded){error=response.error;return nullptr;}
+    json_error_t parseError{};
+    json_t* root=json_loadb(response.body.data(),response.body.size(),0,&parseError);
+    if(!root)error="咪咕 Android 播放地址响应无法解析";
     return root;
+}
+
+bool signAndroidUrl(const std::string& url,const std::string& accountId,int rateType,
+    std::string& signedUrl,std::string& error)
+{
+    const auto value=[&url](const char* name){
+        const std::string key=std::string(name)+"=";
+        auto at=url.find('?');if(at==std::string::npos)return std::string{};
+        while(at<url.size()){
+            ++at;
+            const auto end=url.find('&',at);
+            if(url.compare(at,key.size(),key)==0)
+                return url.substr(at+key.size(),end==std::string::npos?end:end-at-key.size());
+            if(end==std::string::npos)break;
+            at=end;
+        }
+        return std::string{};
+    };
+    const std::string puData=value("puData"),program=value("ProgramID");
+    if(puData.empty()||puData.size()%2!=0||program.size()<7){error="咪咕 Android 地址缺少校验参数";return false;}
+    constexpr char alphabet[]="cdabyzwxkl";
+    if(program[6]<'0'||program[6]>'9'){error="咪咕节目编号无法签名";return false;}
+    char identity='v';
+    if(accountId.size()>7&&accountId[7]>='0'&&accountId[7]<='9')
+        identity=alphabet[accountId[7]-'0'];
+    if(rateType==2)identity='v';
+    if(accountId.size()>3&&accountId.size()<=8)identity='e';
+    std::string signature;signature.reserve(puData.size()+4);
+    for(size_t i=0;i<puData.size()/2;++i){
+        signature.push_back(puData[puData.size()-1-i]);
+        signature.push_back(puData[i]);
+        if(i==1)signature.push_back(identity);
+        else if(i==2)signature.push_back(alphabet[2]);
+        else if(i==3)signature.push_back(alphabet[program[6]-'0']);
+        else if(i==4)signature.push_back('a');
+    }
+    signedUrl=url+"&ddCalcu="+signature+"&sv=10004&ct=android";
+    return true;
 }
 
 std::string absoluteUrl(const std::string& base, const std::string& path)
@@ -376,7 +420,7 @@ cloud::ProviderResult<cloud::PlaybackSource> MiguSportsProvider::playback(const 
         return result;
     }
     std::string error;
-    json_t* root = playInfo(http_, session_, clip.id, error, cancel);
+    json_t* root = androidPlayInfo(http_, session_, clip.id, 3, error, cancel);
     if (!root)
     {
         result.error = {cloud::ProviderErrorCode::NetworkError, error};
@@ -395,7 +439,7 @@ cloud::ProviderResult<cloud::PlaybackSource> MiguSportsProvider::playback(const 
         return result;
     }
     std::string signedUrl;
-    if (!signMiguPlaylist(http_, mediaUrl, signedUrl, error, cancel))
+    if (!signAndroidUrl(mediaUrl, session_.userId, 3, signedUrl, error))
     {
         result.error = {cloud::ProviderErrorCode::Unsupported, error};
         return result;
@@ -449,7 +493,7 @@ cloud::ProviderResult<cloud::PlaybackSource> MiguSportsProvider::playbackLive(
     }
     std::string error;
     if(rateType!=2&&rateType!=3&&rateType!=4){result.error={cloud::ProviderErrorCode::Unsupported,"不支持该画质"};return result;}
-    json_t* root = playInfo(http_, session_, match.id, error,nullptr,rateType);
+    json_t* root = androidPlayInfo(http_, session_, match.id,rateType,error,nullptr);
     if (!root)
     {
         result.error = {cloud::ProviderErrorCode::NetworkError, error};
@@ -478,7 +522,7 @@ cloud::ProviderResult<cloud::PlaybackSource> MiguSportsProvider::playbackLive(
         return result;
     }
     std::string signedUrl;
-    if (!signMiguPlaylist(http_, mediaUrl, signedUrl, error))
+    if (!signAndroidUrl(mediaUrl, session_.userId,rateType,signedUrl,error))
     {
         result.error = {cloud::ProviderErrorCode::Unsupported, error};
         return result;

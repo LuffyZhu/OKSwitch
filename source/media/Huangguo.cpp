@@ -12,7 +12,7 @@ namespace okswitch::media::huangguo {
 namespace {
 constexpr const char* site="https://huangguoai.com";
 constexpr const char* agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-// 0: not tested, 1: direct works, 2: direct failed and proxy works.
+// Short dramas use the same configured proxy as YouTube.
 std::atomic<int> route{0};
 
 bool numeric(const std::string& value){
@@ -104,35 +104,16 @@ std::string encoded(const std::string& value){
 net::HttpResponse page(net::HttpClient& http,const std::string& url,
     const std::atomic<bool>* cancel,const std::string& proxyUrl,bool post=false){
     net::HttpRequest request;request.url=url;request.cancel=cancel;
-    request.connectTimeoutSeconds=5;request.timeoutSeconds=15;
+    request.proxyUrl=proxyUrl;
+    route.store(proxyUrl.empty()?0:2);
+    request.connectTimeoutSeconds=proxyUrl.empty()?5:8;
+    request.timeoutSeconds=proxyUrl.empty()?15:20;
     request.maxResponseBytes=2*1024*1024;request.closeConnection=true;
     request.headers={{"User-Agent",agent},{"Referer",std::string(site)+"/"},
         {"Accept",post?"application/json":"text/html,application/xhtml+xml"}};
     if(post){request.method="POST";request.body="{}";
         request.headers.push_back({"Content-Type","application/json"});}
-    if(!proxyUrl.empty()&&route.load()==2){
-        request.proxyUrl=proxyUrl;
-        request.connectTimeoutSeconds=8;request.timeoutSeconds=20;
-        auto response=http.get(request);
-        if(response.succeeded)return response;
-        if(cancel&&cancel->load())return response;
-        request.proxyUrl.clear();
-        auto direct=http.get(request);
-        if(direct.succeeded)route.store(1);
-        if(direct.succeeded)return direct;
-        response.error="代理失败："+response.error+"；直连重试："+direct.error;
-        return response;
-    }
-    auto response=http.get(request);
-    if(response.succeeded){route.store(1);return response;}
-    if(proxyUrl.empty()||(cancel&&cancel->load()))return response;
-    request.proxyUrl=proxyUrl;
-    request.connectTimeoutSeconds=8;request.timeoutSeconds=20;
-    auto fallback=http.get(request);
-    if(fallback.succeeded)route.store(2);
-    if(fallback.succeeded)return fallback;
-    response.error="直连失败："+response.error+"；代理重试："+fallback.error;
-    return response;
+    return http.get(request);
 }
 std::string digitsAfter(const std::string& text,const std::string& prefix){
     const auto at=text.find(prefix);if(at==std::string::npos)return {};
