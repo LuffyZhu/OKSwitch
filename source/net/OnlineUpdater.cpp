@@ -12,7 +12,7 @@
 namespace okswitch::net {
 namespace {
 constexpr const char* manifestUrl="https://raw.githubusercontent.com/LuffyZhu/OKSwitch/main/update.json";
-constexpr const char* currentVersion="1.1.4";
+constexpr const char* currentVersion="1.1.5";
 struct Download { FILE* file=nullptr;OnlineUpdater* updater=nullptr;std::atomic<bool>* cancel=nullptr;std::atomic<int>* percent=nullptr; };
 size_t writeFile(char* data,size_t size,size_t count,void* context){
     auto* download=static_cast<Download*>(context);
@@ -74,11 +74,28 @@ int OnlineUpdater::run(){
     // A .nro suffix is needed because hbloader will launch this verified copy
     // to perform the replacement after the old program has exited.
     const std::string temp=installedPath_+".update.nro";
+    const std::string identityPath=temp+".sha256";
+    auto matchingIdentity=[&](){
+        FILE* identity=std::fopen(identityPath.c_str(),"rb");if(!identity)return false;
+        char stored[64];const bool matches=std::fread(stored,1,sizeof(stored),identity)==sizeof(stored)
+            &&std::fgetc(identity)==EOF&&std::memcmp(stored,expected.data(),sizeof(stored))==0;
+        std::fclose(identity);return matches;
+    };
+    // The previous release leaves its staged NRO on the SD card. Its smaller
+    // size does not mean it is a partial download of this release.
+    if(!matchingIdentity()){
+        std::remove(temp.c_str());std::remove(identityPath.c_str());
+    }
+    auto saveIdentity=[&](){
+        FILE* identity=std::fopen(identityPath.c_str(),"wb");if(!identity)return false;
+        const bool written=std::fwrite(expected.data(),1,expected.size(),identity)==expected.size();
+        return std::fclose(identity)==0&&written;
+    };
+    if(!saveIdentity())return finish("无法在 SD 卡保存更新记录");
     struct stat partial{};
     curl_off_t offset=stat(temp.c_str(),&partial)==0&&partial.st_size>0&&partial.st_size<bytes
         ?partial.st_size:0;
-    if(stat(temp.c_str(),&partial)!=0||partial.st_size!=bytes){
-        auto transfer=[&](curl_off_t resume,long& status)->CURLcode{
+    auto transfer=[&](curl_off_t resume,long& status)->CURLcode{
             FILE* file=std::fopen(temp.c_str(),resume?"ab":"wb");
             if(!file)return CURLE_WRITE_ERROR;
             CURL* curl=curl_easy_init();if(!curl){std::fclose(file);return CURLE_FAILED_INIT;}
@@ -107,20 +124,40 @@ int OnlineUpdater::run(){
             const bool closed=std::fclose(file)==0;
             if(!flushed||!closed)return CURLE_WRITE_ERROR;
             return result;
-        };
+    };
+    auto successfulTransfer=[&](CURLcode result,long status,bool resumed){
+        return result==CURLE_OK&&status==(resumed?206:200);
+    };
+    if(stat(temp.c_str(),&partial)!=0||partial.st_size!=bytes){
         setMessage(offset?"正在续传 "+version+"...":"正在下载 "+version+"...");
         long status=0;CURLcode result=transfer(offset,status);
-        if(!cancel_.load()&&offset&&(result!=CURLE_OK||status!=206)){
+        if(!cancel_.load()&&offset&&!successfulTransfer(result,status,true)){
             setMessage("续传不可用，正在重新下载...");
             offset=0;result=transfer(0,status);
         }
         if(cancel_.load())return finish("已暂停下载，下次可继续");
-        if(result!=CURLE_OK||(status!=200&&status!=206))
+        if(!successfulTransfer(result,status,offset>0))
             return finish("下载失败，可重试续传："+std::string(curl_easy_strerror(result)));
     }
-    struct stat info{};if(stat(temp.c_str(),&info)!=0||info.st_size!=bytes){std::remove(temp.c_str());return finish("下载文件大小校验失败");}
+    auto verified=[&](){
+        struct stat info{};if(stat(temp.c_str(),&info)!=0||info.st_size!=bytes)return false;
+        std::string actual;return sha256File(temp,actual)&&actual==expected;
+    };
+    if(cancel_.load())return finish("已暂停下载，下次可继续");
     setMessage("正在校验安装包...");percent_.store(96);
-    std::string actual;if(!sha256File(temp,actual)||actual!=expected){std::remove(temp.c_str());return finish("下载文件 SHA-256 校验失败");}
+    if(!verified()){
+        // A proxy or interrupted write can still leave a full-size bad file.
+        // Retry from byte zero once instead of asking the user to retry.
+        std::remove(temp.c_str());setMessage("校验未通过，正在重新下载完整安装包...");
+        long status=0;const CURLcode result=transfer(0,status);
+        if(cancel_.load())return finish("已暂停下载，下次可继续");
+        if(!successfulTransfer(result,status,false))
+            return finish("重新下载失败："+std::string(curl_easy_strerror(result)));
+        if(!verified()){
+            std::remove(temp.c_str());std::remove(identityPath.c_str());
+            return finish("下载文件 SHA-256 校验失败，请切换网络或代理后重试");
+        }
+    }
     stagedPath_=temp;expectedHash_=expected;staged_.store(true);
     percent_.store(100);
     return finish("下载完成（"+version+"）· 按 A 退出并安装");
