@@ -74,6 +74,7 @@ bool PlaybackHistory::load(){
     return readable_;
 }
 bool PlaybackHistory::recordProgress(const PlaybackRecord& record){
+    if(record.item.detailUrl.rfind("okswitch:huangguo:",0)==0)return true;
     if(!readable_||record.item.detailUrl.empty()||record.fileId.empty()||!std::isfinite(record.positionSeconds)||!std::isfinite(record.durationSeconds)||record.positionSeconds<=0||record.durationSeconds<0)return false;
     auto next=records_;
     next.erase(std::remove_if(next.begin(),next.end(),[&](const auto& r){return r.item.detailUrl==record.item.detailUrl&&r.shareUrl==record.shareUrl&&r.fileId==record.fileId;}),next.end());

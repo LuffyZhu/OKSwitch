@@ -108,7 +108,7 @@ net::HttpResponse page(net::HttpClient& http,const std::string& url,
     route.store(proxyUrl.empty()?0:2);
     request.connectTimeoutSeconds=proxyUrl.empty()?5:8;
     request.timeoutSeconds=proxyUrl.empty()?15:20;
-    request.maxResponseBytes=2*1024*1024;request.closeConnection=true;
+    request.maxResponseBytes=2*1024*1024;
     request.headers={{"User-Agent",agent},{"Referer",std::string(site)+"/"},
         {"Accept",post?"application/json":"text/html,application/xhtml+xml"}};
     if(post){request.method="POST";request.body="{}";
@@ -246,7 +246,7 @@ cloud::ProviderResult<cloud::PlaybackSource> playback(net::HttpClient& http,
     const std::string authKey=jsonText(cdn,"authKey"),authValue=jsonText(cdn,"authValue"),app=jsonText(cdn,"app");
     if(!authKey.empty()&&!authValue.empty())result.value.headers.push_back({authKey,authValue});
     if(!app.empty())result.value.headers.push_back({"x-cdn-app",app});
-    result.value.parallelFetches=2;result.value.initialBufferSegments=2;
+    result.value.parallelFetches=2;result.value.initialBufferSegments=1;
     if(usingProxy()&&url.find(".m3u8")!=std::string::npos){
         net::HttpRequest manifest;manifest.url=url;manifest.proxyUrl=proxyUrl;
         manifest.cancel=cancel;manifest.connectTimeoutSeconds=8;manifest.timeoutSeconds=20;

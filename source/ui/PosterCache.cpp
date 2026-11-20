@@ -73,7 +73,7 @@ PosterCache::PosterCache(net::HttpClient& httpClient, SDL_Renderer* renderer)
     mutex_=SDL_CreateMutex();
     diskMutex_=SDL_CreateMutex();
     condition_=SDL_CreateCond();
-    if(mutex_&&condition_)for(int i=0;i<4;++i){
+    if(mutex_&&condition_)for(int i=0;i<6;++i){
         SDL_Thread* worker=SDL_CreateThread(workerEntry,"posters",this);
         if(worker)workers_.push_back(worker);
     }

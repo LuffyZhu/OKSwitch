@@ -233,6 +233,7 @@ class CurlVideoInput {
         return AVERROR(EIO);
     }
     CURL* curl_ = nullptr;
+    CURL* segmentCurl_ = nullptr;
     CURLM* rangeMulti_ = nullptr;
     bool reuseRangeConnections_ = false;
     curl_slist* headers_ = nullptr;
@@ -370,8 +371,7 @@ class CurlVideoInput {
             transfer.begin = segment.begin;
             transfer.maxBytes = expected ? expected : static_cast<size_t>(variableSegmentSlot);
             transfer.stopWhenFull = expected != 0;
-            transfer.easy = curl_easy_duphandle(templateHandle);
-            if (!transfer.easy) continue;
+            transfer.easy = templateHandle;
             const std::string url = s.refreshSegmentUrl_
                 ? s.refreshSegmentUrl_(urls[attempt % urls.size()])
                 : urls[attempt % urls.size()];
@@ -383,8 +383,10 @@ class CurlVideoInput {
             } else {
                 curl_easy_setopt(transfer.easy, CURLOPT_RANGE, nullptr);
             }
-            curl_easy_setopt(transfer.easy, CURLOPT_FRESH_CONNECT, 1L);
-            curl_easy_setopt(transfer.easy, CURLOPT_FORBID_REUSE, 1L);
+            // Keep the CDN connection across HLS segments. Opening a fresh
+            // proxy and TLS session for every segment causes playback stalls.
+            curl_easy_setopt(transfer.easy, CURLOPT_FRESH_CONNECT, 0L);
+            curl_easy_setopt(transfer.easy, CURLOPT_FORBID_REUSE, 0L);
             curl_easy_setopt(transfer.easy, CURLOPT_CONNECTTIMEOUT, 6L);
             curl_easy_setopt(transfer.easy, CURLOPT_TIMEOUT, 12L);
             curl_easy_setopt(transfer.easy, CURLOPT_LOW_SPEED_LIMIT, 1024L);
@@ -396,7 +398,6 @@ class CurlVideoInput {
             ++s.requests_;
             transfer.result = curl_easy_perform(transfer.easy);
             curl_easy_getinfo(transfer.easy, CURLINFO_RESPONSE_CODE, &transfer.status);
-            curl_easy_cleanup(transfer.easy);
             transfer.easy = nullptr;
 
             const bool statusOk = transfer.status == 200 || transfer.status == 206;
@@ -498,7 +499,7 @@ class CurlVideoInput {
     static void startPrefetch(CurlVideoInput& s, size_t index) {
         if (s.prefetch_.valid() || index >= s.segments_.size()
             || s.stopping_.load(std::memory_order_relaxed)) return;
-        CURL* templateHandle = curl_easy_duphandle(s.curl_);
+        CURL* templateHandle = s.segmentCurl_;
         if (!templateHandle) return;
         const Segment segment = s.segments_[index];
         s.cancelPrefetch_.store(false, std::memory_order_relaxed);
@@ -506,7 +507,6 @@ class CurlVideoInput {
         s.prefetch_ = std::async(std::launch::async,
             [&s, segment, templateHandle]() {
                 SegmentDownload result = downloadSegment(s, segment, templateHandle);
-                curl_easy_cleanup(templateHandle);
                 return result;
             });
     }
@@ -740,6 +740,7 @@ public:
         curl_easy_setopt(curl_, CURLOPT_WRITEDATA, this);
         curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, header);
         curl_easy_setopt(curl_, CURLOPT_HEADERDATA, this);
+        if(segmented_)segmentCurl_=curl_easy_duphandle(curl_);
     }
     ~CurlVideoInput() {
         stopping_.store(true, std::memory_order_relaxed);
@@ -748,6 +749,7 @@ public:
         if (rangeWorker_.valid()) rangeWorker_.wait();
         if (prefetch_.valid()) prefetch_.wait();
         if (rangeMulti_) curl_multi_cleanup(rangeMulti_);
+        if (segmentCurl_) curl_easy_cleanup(segmentCurl_);
         if (curl_) curl_easy_cleanup(curl_);
         curl_slist_free_all(headers_);
     }

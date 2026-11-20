@@ -384,7 +384,7 @@ int YouTubeProvider::run(){
 YouTubeResult YouTubeProvider::perform(Action action,const std::string& value){
     const Uint32 ttl=action==Action::Search?10*60*1000u:
         action==Action::Subscriptions||action==Action::ChannelVideos?5*60*1000u:
-        action==Action::Home||action==Action::AccountHistory?2*60*1000u:0;
+        action==Action::AccountHistory?2*60*1000u:0;
     if(ttl){
         SDL_LockMutex(mutex_);
         const Uint32 now=SDL_GetTicks();
@@ -801,17 +801,9 @@ YouTubeResult YouTubeProvider::playbackNow(const std::string& videoId){
         }
     }
     int selectedHeight=progressiveHeight;
-    const bool stableProgressive=!result.stream.url.empty()
-        &&result.stream.url.find("ratebypass=yes")!=std::string::npos;
-    if(stableProgressive){
-        // A single rate-unlimited stream opens faster and avoids the Android
-        // adaptive stream's later 403 after its initial transfer burst.
-        if(!videoUrl.empty()&&!audioUrl.empty()&&videoHeight>progressiveHeight){
-            result.fallbackStream.url=videoUrl;
-            result.fallbackStream.audioUrl=audioUrl;
-            result.fallbackHeight=videoHeight;
-        }
-    }else if(!videoUrl.empty()&&!audioUrl.empty()&&videoHeight>progressiveHeight){
+    if(!videoUrl.empty()&&!audioUrl.empty()&&videoHeight>progressiveHeight){
+        // Prefer the sharper H.264 picture. Keep the single-file version as
+        // a fallback when the adaptive URL or the proxy cannot sustain it.
         if(!result.stream.url.empty()){
             result.fallbackStream.url=result.stream.url;
             result.fallbackHeight=progressiveHeight;
