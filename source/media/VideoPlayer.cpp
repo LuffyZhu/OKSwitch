@@ -902,7 +902,18 @@ PlaybackResult VideoPlayer::play(
                         + std::to_string(seconds) + " 秒";
                     noticeUntil = SDL_GetTicks64() + 1800;
                 }
-                if(down&HidNpadButton_A){closeMenuAndApply();notice="继续播放";noticeUntil=SDL_GetTicks64()+1000;}
+                if(down&HidNpadButton_A){
+                    const int recorded=menuIndex==4
+                        ? static_cast<int>(std::lround(result.positionSeconds))
+                        : static_cast<int>(std::lround(std::max(0.0,result.durationSeconds-result.positionSeconds)));
+                    if(menuIndex==4||result.durationSeconds>0){
+                        seconds=std::max(0,recorded);
+                        if(menuIndex==4)menuIntroChanged=true;
+                        menuPreferencesChanged=true;
+                        notice=std::string(menuIndex==4?"已记录片头 ":"已记录片尾 ")+std::to_string(seconds)+" 秒";
+                    }else notice="无法读取视频时长，暂不能记录片尾";
+                    closeMenuAndApply();noticeUntil=SDL_GetTicks64()+1800;
+                }
             }
             else if ((menuIndex==0||menuIndex==1)&&(down&HidNpadButton_A))
             {
@@ -1220,6 +1231,7 @@ PlaybackResult VideoPlayer::play(
     }
     playbackReady = true;
     controlPoll.playbackReady.store(true, std::memory_order_relaxed);
+    bool initialResumeSeek=options.resumeSeconds>1;
     if(options.resumeSeconds>1)seekDeltaSeconds=options.resumeSeconds;
     else if (introSkipSeconds > 0)seekDeltaSeconds = introSkipSeconds;
 
@@ -1270,6 +1282,7 @@ PlaybackResult VideoPlayer::play(
             }
             if (seekResult >= 0)
             {
+                initialResumeSeek=false;
                 avformat_flush(format);
                 deinterlacer.reset();
                 if(audioFormat)avformat_flush(audioFormat);
@@ -1289,8 +1302,14 @@ PlaybackResult VideoPlayer::play(
             }
             else
             {
-                notice = "跳转失败：" + ffmpegError(seekResult);
-                noticeUntil = SDL_GetTicks64() + 1800;
+                if(initialResumeSeek){
+                    result.error="无法从原位置续播："+ffmpegError(seekResult);
+                    running=false;
+                }else{
+                    notice = "跳转失败：" + ffmpegError(seekResult);
+                    noticeUntil = SDL_GetTicks64() + 1800;
+                }
+                initialResumeSeek=false;
             }
         }
         while (running && (paused || menuOpen || seekPreview || exitConfirm) && !seekReady())

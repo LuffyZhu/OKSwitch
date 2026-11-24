@@ -300,20 +300,23 @@ bool naturalNameLess(const std::string& left,const std::string& right){
     return left.size()<right.size();
 }
 void sortCloudEntries(std::vector<cloud::CloudEntry>& items){std::stable_sort(items.begin(),items.end(),[](const auto& a,const auto& b){if(a.type!=b.type)return a.type==cloud::EntryType::Directory;return naturalNameLess(a.name,b.name);});}
-std::string episodeLabel(const std::string& name,size_t fallback){
-    const auto make=[](unsigned long value){return "第"+std::to_string(value)+"集";};
+int parsedEpisodeNumber(const std::string& name){
     const size_t chinese=name.find("第");
-    if(chinese!=std::string::npos){size_t p=chinese+std::string("第").size(),begin=p;while(p<name.size()&&std::isdigit((unsigned char)name[p]))++p;if(p>begin&&name.compare(p,std::string("集").size(),"集")==0)return "第"+name.substr(begin,p-begin)+"集";}
+    if(chinese!=std::string::npos){size_t p=chinese+std::string("第").size(),begin=p;while(p<name.size()&&std::isdigit((unsigned char)name[p]))++p;if(p>begin&&name.compare(p,std::string("集").size(),"集")==0)return std::atoi(name.substr(begin,p-begin).c_str());}
     std::string upper=name;std::transform(upper.begin(),upper.end(),upper.begin(),[](unsigned char c){return c<128?(char)std::toupper(c):(char)c;});
-    for(size_t p=0;p+1<upper.size();++p)if(upper[p]=='E'&&std::isdigit((unsigned char)upper[p+1])){size_t end=p+1;while(end<upper.size()&&std::isdigit((unsigned char)upper[end]))++end;return make(std::strtoul(upper.substr(p+1,end-p-1).c_str(),nullptr,10));}
-    unsigned long candidate=0;bool found=false;
-    for(size_t p=0;p<upper.size();){if(!std::isdigit((unsigned char)upper[p])){++p;continue;}size_t begin=p;while(p<upper.size()&&std::isdigit((unsigned char)upper[p]))++p;const unsigned long value=std::strtoul(upper.substr(begin,p-begin).c_str(),nullptr,10);const char after=p<upper.size()?upper[p]:'\0';const char before=begin>0?upper[begin-1]:'\0';if(value>0&&value<1000&&after!='P'&&after!='K'&&after!='F'&&!((before=='H'||before=='X')&&(value==264||value==265))){candidate=value;found=true;}}
-    return make(found?candidate:fallback);
+    for(size_t p=0;p+1<upper.size();++p)if(upper[p]=='E'&&std::isdigit((unsigned char)upper[p+1])
+        &&(p==0||!std::isalpha((unsigned char)upper[p-1]))){size_t end=p+1;while(end<upper.size()&&std::isdigit((unsigned char)upper[end]))++end;return std::atoi(upper.substr(p+1,end-p-1).c_str());}
+    // A bare number is only an episode when it is a separate filename token.
+    // Resolution labels such as 4K, 1080P and H264 must not become episode 4.
+    for(size_t p=0;p<upper.size();){if(!std::isdigit((unsigned char)upper[p])){++p;continue;}size_t begin=p;while(p<upper.size()&&std::isdigit((unsigned char)upper[p]))++p;const int value=std::atoi(upper.substr(begin,p-begin).c_str());const char after=p<upper.size()?upper[p]:'\0';const char before=begin>0?upper[begin-1]:'\0';if(value>0&&value<1000&&!std::isalnum((unsigned char)before)&&!std::isalnum((unsigned char)after))return value;}
+    return 0;
+}
+std::string episodeLabel(const std::string& name,size_t fallback){
+    const int number=parsedEpisodeNumber(name);
+    return "第"+std::to_string(number>0?number:fallback)+"集";
 }
 int episodeNumberFromName(const std::string& name){
-    const std::string label=episodeLabel(name,0);
-    const size_t begin=std::string("第").size();
-    return std::atoi(label.c_str()+begin);
+    return parsedEpisodeNumber(name);
 }
 std::vector<std::string> summaryLines(const std::string& value,size_t width=50){
     std::vector<std::string> lines;std::string line;size_t count=0;
@@ -582,7 +585,7 @@ std::string activeSearchKeyword;
 std::string searchInput,lastSuggestionQuery;int keyboardRow=0,keyboardCol=0;bool suggestionFocus=false,suggestionLoading=false;size_t suggestionSelected=0;std::vector<std::string> searchSuggestions;Uint32 suggestionDue=0;
 int sourceFilter=-1;size_t activeShare=0;std::string detailSource;
 media::PlaybackHistory playbackHistory;bool historyReadable=playbackHistory.load();
-std::optional<media::PlaybackRecord> pendingHistoryResume;bool autoPlayEpisode=false;size_t historyLineStart=0,historyLinesTried=0;
+std::optional<media::PlaybackRecord> pendingHistoryResume;bool autoPlayEpisode=false,playNextFromStart=false;size_t historyLineStart=0,historyLinesTried=0;
 std::vector<media::SearchResult> favorites,homeRecommendations;
 std::vector<std::string> footballSources={"电视频道","咪咕精选赛事","咪咕中超"};
 std::vector<media::CctvChannel> cctvChannels=cctv.channels();
@@ -1379,11 +1382,13 @@ if(view==View::Browse&&categories[category].kind==9){
                     [&](const std::string& value,int x,int y,int width){text(r,f,value,x,y,width,true);});
                 if(!played.completed&&!played.error.empty()&&!result.fallbackStream.url.empty()
                     &&played.error!="已取消加载"){
-                    showPlayerStatus("当前线路中断，正在尝试 "+std::to_string(result.fallbackHeight)+"p 备用线路 · B 取消");
+                    const double interruptedAt=std::max(options.resumeSeconds,played.positionSeconds);
+                    showPlayerStatus("当前线路中断，正在从 "+std::to_string((int)interruptedAt)+" 秒尝试 "+std::to_string(result.fallbackHeight)+"p 备用线路 · B 取消");
                     options.displayTitle=youtubePendingTitle+" · "+std::to_string(result.fallbackHeight)+"p";
-                    if(played.opened)options.resumeSeconds=played.positionSeconds;
+                    options.resumeSeconds=interruptedAt;
                     played=media::VideoPlayer::play(r,result.fallbackStream,options,showPlayerStatus,
                         [&](const std::string& value,int x,int y,int width){text(r,f,value,x,y,width,true);});
+                    if(!played.opened)played.positionSeconds=interruptedAt;
                 }
                 // The player uses its own PadState. Consume held buttons before
                 // browsing can interpret R as a category switch.
@@ -1955,6 +1960,8 @@ else if(!lineLoading&&(k&HidNpadButton_A)&&view==View::Shares&&!detail.shares.em
 else if((k&HidNpadButton_A)&&view==View::Files&&activeCloud!=CloudKind::Guazi&&!cloudItems.empty()&&cloudItems[selected].type==cloud::EntryType::Directory){const std::string directory=activeCloud==CloudKind::Baidu?cloudItems[selected].shareToken:cloudItems[selected].id;auto l=activeCloud==CloudKind::Baidu?baidu.listFiles(session,directory):quark.listFiles(session,directory);if(l.succeeded){rememberPage();dirs.push_back(directory);cloudItems=l.value;sortCloudEntries(cloudItems);selected=0;status="Loaded "+std::to_string(cloudItems.size())+(activeCloud==CloudKind::Baidu?" Baidu items":" Quark items");}else status=l.error.message;}
 else if(((k&HidNpadButton_A)||resumeLoginPlayback||autoPlayEpisode)&&view==View::Files&&selected<cloudItems.size()){
     autoPlayEpisode=false;
+    const bool startEpisodeFromBeginning=playNextFromStart;
+    playNextFromStart=false;
     const bool authenticated=activeCloud==CloudKind::Guazi?true:(activeCloud==CloudKind::Baidu?baiduLoginApplied:loginApplied);
     const bool baiduStatusInvalid=activeCloud==CloudKind::Baidu&&(
         status.find("登录状态无效")!=std::string::npos
@@ -2018,7 +2025,7 @@ else if(((k&HidNpadButton_A)||resumeLoginPlayback||autoPlayEpisode)&&view==View:
                 else if(const auto* series=playbackHistory.findSeries(detailItem.detailUrl)){playOptions.introSkipSeconds=series->introSkipSeconds;playOptions.outroSkipSeconds=series->outroSkipSeconds;playOptions.volumePercent=series->volumePercent;}
             }
             const int episodeNumber=episodeNumberFromName(cloudItems[selected].name);
-            if(!shortDrama){
+            if(!shortDrama&&!startEpisodeFromBeginning){
                 if(const auto* prior=playbackHistory.find(detailItem.detailUrl,shareUrl,cloudItems[selected].id))playOptions.resumeSeconds=prior->positionSeconds;
                 else if(const auto* prior=playbackHistory.findTitleEpisode(detailItem.title,episodeNumber,(int)episodeOrdinal))playOptions.resumeSeconds=prior->positionSeconds;
                 if(pendingHistoryResume){if(auto index=resumeEpisodeIndex(*pendingHistoryResume);index&&*index==selected)playOptions.resumeSeconds=pendingHistoryResume->positionSeconds;}
@@ -2049,7 +2056,7 @@ else if(((k&HidNpadButton_A)||resumeLoginPlayback||autoPlayEpisode)&&view==View:
                 if(!cleaned&&played.error.empty())status+=" · 临时文件清理失败："+cleanupError;
             }else status+="，再次打开本集可直接继续";
             const int episodeDelta=played.episodeDelta!=0?played.episodeDelta:(autoPlayNext&&played.completed&&played.error.empty()?1:0);
-            if(episodeDelta!=0){long long next=(long long)selected;do{next+=episodeDelta;}while(next>=0&&next<(long long)cloudItems.size()&&cloudItems[(size_t)next].type!=cloud::EntryType::File);if(next>=0&&next<(long long)cloudItems.size()){selected=(size_t)next;autoPlayEpisode=true;status=episodeDelta<0?"正在播放上一集...":"正在播放下一集...";}else if(played.completed&&autoPlayNext&&episodeDelta>0){status="播放完成 · 已经是最后一集";lastEpisodeNoticeUntil=SDL_GetTicks()+2500;}}
+            if(episodeDelta!=0){long long next=(long long)selected;do{next+=episodeDelta;}while(next>=0&&next<(long long)cloudItems.size()&&cloudItems[(size_t)next].type!=cloud::EntryType::File);if(next>=0&&next<(long long)cloudItems.size()){selected=(size_t)next;autoPlayEpisode=true;playNextFromStart=true;status=episodeDelta<0?"正在播放上一集...":"正在播放下一集...";}else if(played.completed&&autoPlayNext&&episodeDelta>0){status="播放完成 · 已经是最后一集";lastEpisodeNoticeUntil=SDL_GetTicks()+2500;}}
             if(!playbackPreferencesSaved)status+=" · 剧集设置保存失败，请检查 SD 卡";
         }
     }

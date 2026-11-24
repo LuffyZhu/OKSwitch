@@ -12,7 +12,7 @@
 namespace okswitch::net {
 namespace {
 constexpr const char* manifestUrl="https://raw.githubusercontent.com/LuffyZhu/OKSwitch/main/update.json";
-constexpr const char* currentVersion="1.1.8";
+constexpr const char* currentVersion="1.1.9";
 struct Download { FILE* file=nullptr;OnlineUpdater* updater=nullptr;std::atomic<bool>* cancel=nullptr;std::atomic<int>* percent=nullptr; };
 size_t writeFile(char* data,size_t size,size_t count,void* context){
     auto* download=static_cast<Download*>(context);

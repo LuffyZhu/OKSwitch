@@ -116,8 +116,10 @@ const PlaybackRecord* PlaybackHistory::findTitleEpisode(const std::string& title
     const auto key=titleKey(title);if(key.empty())return nullptr;
     auto it=std::find_if(records_.begin(),records_.end(),[&](const auto& r){
         if(titleKey(r.item.title)!=key)return false;
-        if(episodeNumber>0&&r.episodeNumber>0)return r.episodeNumber==episodeNumber;
-        return episodeOrdinal>0&&r.episodeOrdinal==episodeOrdinal;
+        // The ordinal is more reliable for the same series: older versions
+        // recorded resolution digits (for example 4K) as episode numbers.
+        if(episodeOrdinal>0&&r.episodeOrdinal>0)return r.episodeOrdinal==episodeOrdinal;
+        return episodeNumber>0&&r.episodeNumber>0&&r.episodeNumber==episodeNumber;
     });
     return it==records_.end()?nullptr:&*it;
 }
